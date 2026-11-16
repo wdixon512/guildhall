@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
+import { PaneResizeHandle } from './PaneResizeHandle';
 
 export const accents = [
   { name: 'Plum', value: '#71465f' }, { name: 'Slate', value: '#536078' },
@@ -40,7 +41,7 @@ export function Portrait({ identity, large = false, expression = 'neutral' }: { 
   return <span key={`${identity.portrait}-${expression}-${!!identity.customPortrait}`} className={`portrait ${large ? 'portrait-large' : ''}`} role="img" aria-label={`${identity.name || 'Maren'} portrait${expression !== 'neutral' && !identity.customPortrait ? `, ${expression}` : ''}`} style={style} />;
 }
 
-export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean }) {
+export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void } }) {
   const picker = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLElement>(null);
   const [overlay, setOverlay] = useState(() => window.innerWidth < 1280);
@@ -84,14 +85,15 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
     } catch (cause) { if (version === uploadVersion.current) setError(cause instanceof Error && cause.message === 'portrait_too_large' ? 'The prepared portrait is too large to save. Choose a simpler or smaller image.' : 'This image could not be opened. Try another image.'); }
     finally { URL.revokeObjectURL(url); if (version === uploadVersion.current) setLoading(false); }
   }
-  return <aside ref={panel} className={`member-panel ${closing ? 'panel-closing' : ''}`} role={overlay ? 'dialog' : undefined} aria-modal={overlay ? true : undefined} aria-label="Guild member" onKeyDown={event => {
+  return <aside id="guild-member-pane" ref={panel} className={`member-panel ${closing ? 'panel-closing' : ''}`} role={overlay ? 'dialog' : undefined} aria-modal={overlay ? true : undefined} aria-label="Guild member" onKeyDown={event => {
     if (event.key !== 'Tab' || !overlay) return;
-    const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(.sr-only), select');
+    const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(.sr-only), select, textarea:not(:disabled), [role="separator"][tabindex="0"]');
     if (!controls?.length) return;
     const first = controls[0], last = controls[controls.length - 1];
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   }}>
+    {resizePane && <PaneResizeHandle className="right-pane-resizer member-resizer" label="Resize Guild Member pane" controls="guild-member-pane" value={resizePane.value} min={resizePane.min} max={resizePane.max} direction={-1} onResize={resizePane.onResize} />}
     <div className="member-heading"><h2>Guild member</h2><button className="icon-button" aria-label="Close guild member" onClick={onClose}><Icon name="close" /></button></div>
     <Portrait identity={identity} large expression={previewExpression === 'auto' ? activity : previewExpression} />
     <div className="member-fields"><label>Name<input maxLength={40} value={identity.name} onChange={event => onChange({ ...identity, name: event.target.value })} /></label><label>Role<input maxLength={40} value={identity.role} onChange={event => onChange({ ...identity, role: event.target.value })} /></label></div>
