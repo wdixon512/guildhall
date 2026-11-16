@@ -1,5 +1,5 @@
 import { fireEvent, render as renderView, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { bootstrap, request } from './api';
 
@@ -12,6 +12,8 @@ function render(element: React.ReactNode) {
 vi.mock('./api', async importOriginal => ({
   ...await importOriginal<typeof import('./api')>(), bootstrap: vi.fn(), request: vi.fn(),
 }));
+const defaultWindowWidth = window.innerWidth;
+afterEach(() => Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultWindowWidth }));
 
 function responses(database: unknown, models: unknown) {
   vi.mocked(request).mockImplementation(async (_, path) => path === '/health' ? { status: 'ok', apiVersion: 1 } : path === '/ready' ? database : models);
@@ -23,6 +25,8 @@ beforeEach(() => {
 
 describe('connection status', () => {
   it('requires explicit confirmation before deleting a member and all of its sessions', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 420 });
     const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 3, isArchived: false };
     const deleted: string[] = [];
     vi.mocked(request).mockImplementation(async (_, path, __, init) => {
@@ -35,10 +39,13 @@ describe('connection status', () => {
       throw new Error(`Unexpected API request: ${path}`);
     });
     render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Connections' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand chats sidebar' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Member actions for Maren' }));
     const archiveAction = screen.getByRole('menuitem', { name: 'Archive member' });
     fireEvent.keyDown(archiveAction, { key: 'ArrowDown' });
     const deleteAction = screen.getByRole('menuitem', { name: 'Delete member and sessions' });
+    expect(deleteAction).toHaveTextContent('Delete…');
     expect(deleteAction).toHaveFocus();
     fireEvent.keyDown(deleteAction, { key: 'Home' });
     expect(archiveAction).toHaveFocus();
@@ -50,11 +57,19 @@ describe('connection status', () => {
     expect(deleted).toEqual([]);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(deleted).toEqual([]);
-    fireEvent.click(screen.getByRole('button', { name: 'Member actions for Maren' }));
+    const actionsButton = screen.getByRole('button', { name: 'Member actions for Maren' });
+    fireEvent.click(actionsButton);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete member and sessions' }));
+    fireEvent.keyDown(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(actionsButton).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Collapse chats sidebar' })).toBeInTheDocument();
+    fireEvent.click(actionsButton);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete member and sessions' }));
     fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete member and sessions' }));
     await waitFor(() => expect(deleted).toEqual([`/agents/${profile.id}?expectedRevision=3`]));
     expect(screen.queryByRole('button', { name: 'Member actions for Maren' })).toBeNull();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
   });
 
   it('archives and restores members without hiding their saved sessions or enabling new sessions', async () => {
@@ -224,6 +239,7 @@ describe('connection status', () => {
         return { runId: `queued-run-${sends.length}` };
       }
       if (path.endsWith('/promote')) { promotions.push(path); return { runId: 'queued-run-1', conversationRevision: chat.revision + 1 }; }
+      if (path === '/runs/queued-run-1/cancel' && init?.method === 'POST') { const queued = messages.find(message => message.runId === 'queued-run-1'); if (queued) queued.status = 'Cancelled'; return null; }
       return { conversation: chat, messages: [...messages] };
     });
     render(<App />);
@@ -239,7 +255,13 @@ describe('connection status', () => {
     const queuedPanel = screen.getByLabelText('Queued messages');
     expect(within(queuedPanel).getByText('A queued follow-up')).toBeInTheDocument();
     expect(screen.queryByText('Queued — waiting for a turn.')).toBeNull();
-    fireEvent.click(within(queuedPanel).getByRole('button', { name: 'Send queued message 2 now' }));
+    fireEvent.click(within(queuedPanel).getByRole('button', { name: 'Edit queued message 2' }));
+    await waitFor(() => expect(composer).toHaveValue('A queued follow-up'));
+    fireEvent.change(composer, { target: { value: 'Edited queued follow-up' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace queued message' }));
+    await waitFor(() => expect(sends).toEqual(['queue', 'queue']));
+    expect(await within(screen.getByLabelText('Queued messages')).findByText('Edited queued follow-up')).toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText('Queued messages')).getByRole('button', { name: 'Send queued message 3 now' }));
     await waitFor(() => expect(promotions).toHaveLength(1));
     await waitFor(() => expect(model).toBeEnabled());
     fireEvent.change(model, { target: { value: 'qwen3-vl:2b' } });
@@ -247,7 +269,7 @@ describe('connection status', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Follow-up delivery' }), { target: { value: 'send_now' } });
     fireEvent.change(composer, { target: { value: 'Do this now instead' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
-    await waitFor(() => expect(sends).toEqual(['queue', 'send_now']));
+    await waitFor(() => expect(sends).toEqual(['queue', 'queue', 'send_now']));
   });
 
   it('keeps portraits on member headings and uses a neutral session icon while keeping the model current', async () => {
@@ -511,13 +533,15 @@ describe('connection status', () => {
       if (path.startsWith('/conversations?')) return [chat];
       return { conversation: chat, messages: [
         { id: 'user-message', role: 'user', text: 'Please explain **this**.', status: 'Completed', turnNumber: 1 },
-        { id: 'assistant-message', role: 'assistant', text: 'Use `safe` formatting.', status: 'Completed', turnNumber: 1 },
+        { id: 'assistant-message', role: 'assistant', text: 'Use `safe` formatting.', status: 'Completed', turnNumber: 1, responseDurationSeconds: 54 },
       ] };
     });
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open Formatting check' }));
     expect(await screen.findByText('this', { selector: 'strong' })).toBeInTheDocument();
     expect(screen.getByText('safe', { selector: 'code' })).toBeInTheDocument();
+    const responseTime = screen.getByText('Response time: 54 s');
+    expect(responseTime.nextElementSibling).toHaveClass('message-surface');
     fireEvent.click(screen.getByRole('button', { name: 'Copy assistant response' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Use `safe` formatting.'));
   });
