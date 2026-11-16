@@ -18,6 +18,48 @@ public static class ChatEndpoints
     {
         app.MapPost("/runs/{id:guid}/cancel", async (Guid id, ChatRunner runner, CancellationToken ct) =>
             await runner.CancelAsync(id, ct) ? Results.Ok(new { runId = id }) : Results.NotFound());
+        app.MapPost("/runs/{id:guid}/promote", async (Guid id, PromoteRunRequest request, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, CancellationToken ct) =>
+        {
+            await runner.MutationGate.WaitAsync(ct);
+            try
+            {
+                await using var db = await factory.CreateDbContextAsync(ct);
+                await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+                var run = await db.ChatRuns.SingleOrDefaultAsync(x => x.Id == id, ct);
+                if (run is null) return Results.NotFound();
+                var conversation = await db.Conversations.SingleAsync(x => x.Id == run.ConversationId, ct);
+                if (conversation.Revision != request.ExpectedConversationRevision)
+                    return Results.Conflict(new ErrorResponse("revision_conflict", "Conversation changed; refresh and retry."));
+                if (run.Status != ChatRunStatus.Queued)
+                    return Results.Conflict(new ErrorResponse("run_not_queued", "Only a queued reply can be moved ahead."));
+
+                var queued = await db.ChatRuns.AsNoTracking().Where(x => x.ConversationId == run.ConversationId && x.Status == ChatRunStatus.Queued)
+                    .OrderBy(x => x.TurnNumber).Select(x => new { x.Id, x.TurnNumber }).ToListAsync(ct);
+                var reservedTurns = queued.Select(x => x.TurnNumber).ToArray();
+                var position = 0;
+                await db.ChatRuns.Where(x => x.ConversationId == run.ConversationId && x.Status == ChatRunStatus.Queued)
+                    .ExecuteUpdateAsync(set => set.SetProperty(x => x.TurnNumber, x => -x.TurnNumber), ct);
+                foreach (var pending in queued.OrderBy(x => x.Id == id ? 0 : 1).ThenBy(x => x.TurnNumber))
+                {
+                    // Reuse only queued slots; terminal/removed turns retain their numbers.
+                    var assignedTurn = reservedTurns[position++];
+                    await db.ChatRuns.Where(x => x.Id == pending.Id)
+                        .ExecuteUpdateAsync(set => set.SetProperty(x => x.TurnNumber, assignedTurn), ct);
+                }
+
+                conversation.Revision++;
+                conversation.UpdatedUtc = DateTime.UtcNow;
+                var activeRunId = await db.ChatRuns.Where(x => x.ConversationId == run.ConversationId &&
+                        (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling))
+                    .Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+                await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                if (activeRunId.HasValue) await runner.CancelAsync(activeRunId.Value, ct);
+                runner.Start(id);
+                return Results.Ok(new { runId = id, conversationRevision = conversation.Revision });
+            }
+            finally { runner.MutationGate.Release(); }
+        });
         app.MapGet("/assistant", async (IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
@@ -50,6 +92,32 @@ public static class ChatEndpoints
             profile.Name = request.Name.Trim(); profile.Role = request.Role.Trim(); profile.PortraitId = request.PortraitId; profile.CustomPortrait = request.CustomPortrait; profile.Accent = request.Accent; profile.Instructions = request.Instructions; profile.DefaultModelId = string.IsNullOrWhiteSpace(request.DefaultModelId) ? null : request.DefaultModelId.Trim(); profile.Revision++;
             await db.SaveChangesAsync(ct);
             return Results.Ok(ToProfile(profile));
+        });
+        app.MapDelete("/agents/{id:guid}", async (Guid id, long expectedRevision, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, CancellationToken ct) =>
+        {
+            await runner.MutationGate.WaitAsync(ct);
+            try
+            {
+                await using var db = await factory.CreateDbContextAsync(ct);
+                await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+                var profile = await db.AgentDefinitions.SingleOrDefaultAsync(x => x.Id == id, ct);
+                if (profile is null) return Results.NotFound();
+                if (profile.Revision != expectedRevision)
+                    return Results.Conflict(new ErrorResponse("revision_conflict", "Guild member changed; refresh and retry."));
+
+                var conversations = db.Conversations.Where(x => x.AgentDefinitionId == id);
+                if (await conversations.AnyAsync(x => x.Runs.Any(r => r.Status == ChatRunStatus.Running || r.Status == ChatRunStatus.Cancelling || r.Status == ChatRunStatus.Queued), ct))
+                    return Results.Conflict(new ErrorResponse("member_has_active_run", "Wait for this member's running or queued replies to finish before deleting the member and saved sessions."));
+                if (id == AssistantId && !await conversations.AnyAsync(ct))
+                    return Results.Conflict(new ErrorResponse("member_protected", "The built-in assistant cannot be deleted until it has a saved session."));
+
+                await conversations.ExecuteDeleteAsync(ct);
+                db.AgentDefinitions.Remove(profile);
+                await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                return Results.NoContent();
+            }
+            finally { runner.MutationGate.Release(); }
         });
         app.MapPatch("/agents/{id:guid}/lifecycle", async (Guid id, GuildMemberLifecycleRequest request, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, CancellationToken ct) =>
         {
@@ -85,7 +153,8 @@ public static class ChatEndpoints
             var take = Math.Clamp(limit ?? 25, 1, 100); await using var db = await factory.CreateDbContextAsync(ct);
             var rows = await db.Conversations.AsNoTracking().Where(x => x.IsArchived == (archived ?? false)).OrderByDescending(x => x.UpdatedUtc).Take(take)
                 .Select(x => new ConversationSummary(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc,
-                    x.Runs.Any(r => r.Status == ChatRunStatus.Running || r.Status == ChatRunStatus.Cancelling || r.Status == ChatRunStatus.Queued), x.Revision, x.AgentDefinitionId)).ToListAsync(ct);
+                    x.Runs.Any(r => r.Status == ChatRunStatus.Running || r.Status == ChatRunStatus.Cancelling || r.Status == ChatRunStatus.Queued), x.Revision, x.AgentDefinitionId,
+                    x.Runs.Where(r => r.FinishedUtc != null && r.Messages.Any(m => m.Role == ChatMessageRole.Assistant && (r.Status == ChatRunStatus.Completed || m.Text != string.Empty))).Max(r => (DateTime?)r.FinishedUtc))).ToListAsync(ct);
             var untitledIds = rows.Where(x => x.Title == "New conversation").Select(x => x.Id).ToList();
             var firstMessages = await db.ChatMessages.AsNoTracking().Where(m => untitledIds.Contains(m.Run.ConversationId) && m.Role == ChatMessageRole.User)
                 .OrderBy(m => m.Run.TurnNumber).Select(m => new { ConversationId = m.Run.ConversationId, m.Text }).ToListAsync(ct);
@@ -104,18 +173,20 @@ public static class ChatEndpoints
         app.MapGet("/conversations/{id:guid}", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct); var item = await db.Conversations.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct); if (item is null) return Results.NotFound();
-            var storedMessages = await db.ChatMessages.AsNoTracking().Where(m => m.Run.ConversationId == id).OrderBy(m => m.Run.TurnNumber).Select(m => new { m.Id, Role = m.Role, m.Text, m.RunId, Status = m.Run.Status, m.Run.ErrorCode, m.Run.ModelId, TurnNumber = m.Run.TurnNumber }).ToListAsync(ct);
+            var storedMessages = await db.ChatMessages.AsNoTracking().Where(m => m.Run.ConversationId == id).OrderBy(m => m.Run.TurnNumber).Select(m => new { m.Id, Role = m.Role, m.Text, m.RunId, Status = m.Run.Status, m.Run.ErrorCode, m.Run.ModelId, TurnNumber = m.Run.TurnNumber, m.Run.StartedUtc, m.Run.FinishedUtc }).ToListAsync(ct);
             var ids = storedMessages.Select(m => m.Id).ToList();
             var attachments = await db.ChatAttachments.AsNoTracking().Where(a => ids.Contains(a.MessageId)).Select(a => new { a.Id, a.MessageId, a.FileName, a.ContentType, a.Length }).ToListAsync(ct);
-            var messages = storedMessages.OrderBy(m => m.TurnNumber).ThenBy(m => m.Role == ChatMessageRole.User ? 0 : 1).Select(m => new MessageView(m.Id, m.Role.ToString().ToLowerInvariant(), m.Text, m.RunId, m.Status.ToString(), m.TurnNumber, attachments.Where(a => a.MessageId == m.Id).Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Length)).ToArray(), m.ErrorCode, m.ModelId)).ToList();
+            var messages = storedMessages.OrderBy(m => m.TurnNumber).ThenBy(m => m.Role == ChatMessageRole.User ? 0 : 1).Select(m => new MessageView(m.Id, m.Role.ToString().ToLowerInvariant(), m.Text, m.RunId, m.Status.ToString(), m.TurnNumber, attachments.Where(a => a.MessageId == m.Id).Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Length)).ToArray(), m.ErrorCode, m.ModelId,
+                m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue ? Math.Max(0, (m.FinishedUtc.Value - m.StartedUtc).TotalSeconds) : null)).ToList();
             var title = item.Title;
             if (title == "New conversation")
             {
                 var firstMessage = storedMessages.FirstOrDefault(m => m.Role == ChatMessageRole.User);
                 if (firstMessage is not null) title = MakeTitle(firstMessage.Text, attachments.Where(a => a.MessageId == firstMessage.Id).Select(a => (a.FileName, a.ContentType, Array.Empty<byte>())).ToList());
             }
+            var lastResponseUtc = storedMessages.Where(m => m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue && (m.Status == ChatRunStatus.Completed || !string.IsNullOrEmpty(m.Text))).Select(m => (DateTime?)m.FinishedUtc).Max();
             var summary = new ConversationSummary(item.Id, title, item.SelectedModelId, item.CreatedUtc, item.UpdatedUtc, item.IsArchived, item.ArchivedUtc,
-                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId);
+                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId, lastResponseUtc);
             var agent = await db.AgentDefinitions.AsNoTracking().SingleAsync(x => x.Id == item.AgentDefinitionId, ct);
             return Results.Ok(new ConversationResponse(summary, messages, ToProfile(agent)));
         });
