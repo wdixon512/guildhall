@@ -88,18 +88,17 @@ body{overscroll-behavior:none}
 .queue-icon{display:grid;place-items:center;flex:0 0 22px;width:22px;height:22px;color:#c8a574}
 .queue-item>span:not(.queue-icon){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .queue-item button{min-width:36px;min-height:36px;padding:6px}
-.waiting-label{animation:waiting-fade 1.8s ease-in-out infinite}
-@keyframes waiting-fade{50%{opacity:.48}}
 .queue-item button:focus-visible,.composer-toolbar button:focus-visible,.send-button:focus-visible{outline:2px solid #edc38e;outline-offset:2px}
 @media(max-width:480px){.composer{grid-template-columns:minmax(0,1fr);padding:10px;gap:7px}.composer-toolbar{grid-column:1;justify-content:flex-start!important;gap:5px}.composer-spacer{display:none}.composer-toolbar button{min-width:38px}.model-control{border:0;padding-left:0}.model-control select{max-width:38vw}.queue-panel{margin-left:8px;margin-right:8px}.composer-region footer{font-size:8px}}
-@media(prefers-reduced-motion:reduce){.waiting-label{animation:none}}
-.waiting-label{display:inline-grid;vertical-align:baseline;min-height:1.5em}
-.waiting-label>span:not(.sr-only){grid-area:1/1;animation:waiting-word-cycle 3.6s ease-in-out infinite;opacity:0}
-.waiting-label>span:nth-child(2){animation-delay:1.2s}
-.waiting-label>span:nth-child(3){animation-delay:2.4s}
-@keyframes waiting-word-cycle{0%,28%{opacity:1}34%,94%{opacity:0}100%{opacity:0}}
+.waiting-label{display:inline-grid;vertical-align:baseline;min-height:1.5em;max-width:100%}
+.waiting-label>span:not(.sr-only){grid-area:1/1;animation:waiting-word-cycle 36s ease-in-out infinite;opacity:0}
+.waiting-label>span:nth-child(2){animation-delay:6s}
+.waiting-label>span:nth-child(3){animation-delay:12s}
+.waiting-label>span:nth-child(4){animation-delay:18s}
+.waiting-label>span:nth-child(5){animation-delay:24s}
+.waiting-label>span:nth-child(6){animation-delay:30s}
+@keyframes waiting-word-cycle{0%,14%{opacity:1}16%,100%{opacity:0}}
 @media(prefers-reduced-motion:reduce){.waiting-label>span:not(.sr-only){animation:none;opacity:0}.waiting-label>span:first-child{opacity:1}}
-
 
 /* UI scale enlarges content without consuming extra viewport columns. */
 .workspace{grid-template-columns:calc(72px / var(--ui-scale,1)) calc(280px / var(--ui-scale,1)) minmax(0,1fr)}

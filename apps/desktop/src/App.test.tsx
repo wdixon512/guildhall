@@ -304,13 +304,13 @@ describe('connection status', () => {
     render(<App />);
     const first = await screen.findByRole('button', { name: 'Open running' });
     fireEvent.click(first);
-    await screen.findByText('Thinking through your request');
+    await screen.findByText(/reply is in progress\./);
     expect(screen.getByRole('button', { name: 'Delete running' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Archive running' })).toBeDisabled();
     const other = screen.getByRole('button', { name: 'Open other' });
     expect(other).toBeEnabled();
     fireEvent.click(other);
-    await waitFor(() => expect(screen.queryByText('Thinking through your request')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/reply is in progress\./)).toBeNull());
     expect(screen.getByRole('heading', { name: 'other' })).toBeInTheDocument();
   });
 
