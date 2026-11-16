@@ -7,6 +7,7 @@ using System.Text.Json;
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -15,10 +16,10 @@ namespace Guildhall.AgentHost.Tests;
 
 internal static class QueueSqlChecks
 {
-    public static async Task VerifyAsync(DbContextOptions<GuildhallDbContext> options)
+    public static async Task VerifyAsync(DbContextOptions<GuildhallDbContext> options, int keepAliveSeconds = 0)
     {
-        var provider = new Provider();
-        await using var app = new ApiFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services => {
+        var provider = new Provider(keepAliveSeconds);
+        await using var app = new ApiFactory().WithWebHostBuilder(builder => builder.UseSetting("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS", keepAliveSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)).ConfigureServices(services => {
             services.RemoveAll<IDbContextFactory<GuildhallDbContext>>();
             services.AddSingleton<IDbContextFactory<GuildhallDbContext>>(new Factory(options));
             services.RemoveAll<IHttpClientFactory>(); services.AddSingleton<IHttpClientFactory>(provider);
@@ -63,6 +64,15 @@ internal static class QueueSqlChecks
         Assert.Contains("hold-first", calls[1].Context);
         Assert.DoesNotContain("queued-second", calls[1].Context);
         await using var verify = new GuildhallDbContext(options);
+        var behavior = await verify.GuildhallBehaviorSettings.SingleAsync(x => x.Id == 1);
+        var captured = await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId);
+        Assert.Equal(behavior.Revision, JsonDocument.Parse(captured.SettingsSnapshotJson!).RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
+        using (var behaviorSnapshot = JsonDocument.Parse(captured.SettingsSnapshotJson!))
+        {
+            Assert.Equal(1, behaviorSnapshot.RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
+            Assert.Contains("capable member of the Guildhall council", behaviorSnapshot.RootElement.GetProperty("guildhallBehavior").GetString());
+        }
+        Assert.Equal("A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == first.RunId)).Status);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == removed.RunId)).Status);
         Assert.Equal(ChatRunStatus.Completed, (await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId)).Status);
@@ -131,7 +141,7 @@ internal static class QueueSqlChecks
     private sealed class Factory(DbContextOptions<GuildhallDbContext> options) : IDbContextFactory<GuildhallDbContext>
     { public GuildhallDbContext CreateDbContext() => new(options); }
 
-    private sealed class Provider : HttpMessageHandler, IHttpClientFactory
+    private sealed class Provider(int keepAliveSeconds) : HttpMessageHandler, IHttpClientFactory
     {
         public ConcurrentQueue<(string Text, string Model, string Context)> Calls { get; } = new();
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -141,14 +151,18 @@ internal static class QueueSqlChecks
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Assert.False(json.RootElement.GetProperty("think").GetBoolean());
+            Assert.Equal(Math.Clamp(keepAliveSeconds, 0, 900), json.RootElement.GetProperty("keep_alive").GetInt32());
             var messages = json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+            Assert.Equal("system", messages[0].GetProperty("role").GetString());
+            Assert.StartsWith("You are a capable member of the Guildhall council", messages[0].GetProperty("content").GetString());
             var text = messages.Last().GetProperty("content").GetString()!;
             Calls.Enqueue((text, json.RootElement.GetProperty("model").GetString()!, string.Join("\n", messages.Select(x => x.GetProperty("content").GetString()))));
             var count = Interlocked.Increment(ref concurrent); Peak = Math.Max(Peak, count);
             try
             {
                 if (text.StartsWith("hold-", StringComparison.Ordinal)) { Started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); }
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"message\":{\"content\":\"A completed reply.\"},\"done\":true}\n", Encoding.UTF8, "application/x-ndjson") };
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"message\":{\"thinking\":\"Private fixture reasoning\"},\"done\":false}\n{\"message\":{\"content\":\"A completed reply.\"},\"done\":true}\n", Encoding.UTF8, "application/x-ndjson") };
             }
             finally { Interlocked.Decrement(ref concurrent); }
         }

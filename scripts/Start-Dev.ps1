@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param([switch]$HostOnly, [switch]$BuiltDesktop, [switch]$UseGpu, [ValidateRange(1,120)][int]$RunForSeconds = 0)
+param([switch]$HostOnly, [switch]$BuiltDesktop, [switch]$UseGpu, [ValidateRange(0,900)][int]$KeepModelWarmSeconds = 0, [ValidateRange(1,120)][int]$RunForSeconds = 0)
 . "$PSScriptRoot/Common.ps1"
 Assert-LocalPortFree 43120
 if ($HostOnly -and $BuiltDesktop) { throw 'Choose HostOnly or BuiltDesktop, not both.' }
@@ -13,7 +13,8 @@ $shared['GUILDHALL_HOST_URL'] = 'http://127.0.0.1:43120'
 $shared['GUILDHALL_SESSION_TOKEN'] = $token
 $hostEnvironment = $shared.Clone()
 $hostEnvironment['GUILDHALL_USE_GPU'] = if ($UseGpu) { 'true' } else { 'false' }
-Write-Output "Inference mode: $(if ($UseGpu) { 'GPU automatic offload' } else { 'CPU only, 4 threads' }); unload model after each reply."
+$hostEnvironment['GUILDHALL_MODEL_KEEP_ALIVE_SECONDS'] = [string]$KeepModelWarmSeconds
+Write-Output "Inference mode: $(if ($UseGpu) { 'GPU automatic offload' } else { 'CPU only, 4 threads' }); model retention after replies: $KeepModelWarmSeconds seconds."
 $hostEnvironment['GUILDHALL_OLLAMA_URL'] = if ($env:GUILDHALL_OLLAMA_URL) { $env:GUILDHALL_OLLAMA_URL } else { 'http://127.0.0.1:11434' }
 $runtimeConnection = Get-LocalSqlConnection -Runtime
 if ($runtimeConnection) { $hostEnvironment['ConnectionStrings__Guildhall'] = $runtimeConnection }

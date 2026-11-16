@@ -4,6 +4,12 @@ Status: implementation authorized, November 15, 2026. Work is constrained to the
 
 ## Outcome
 
+Model retention follow-up: an opt-in `-KeepModelWarmSeconds 300` launcher setting requests five-minute retention, bounded to 0–900 seconds with default 0. Backend payload checks pass; live resource/performance QC remains part of C16/Q06.
+
+November 16 quality follow-up: [agent quality and performance](agent-quality-and-performance.md) records SQL memory ownership, the captured Guildhall behavior policy and the thinking-off backend change. C16/Q06 must measure local model speed and answer quality; B04/Q06 must fix per-keystroke council disabling without losing drafts. B05/B06 memory and later tools/delegation retain their existing order. Backend code is prepared on `codex/backend`; live inference and frontend QC are still pending.
+
+Guildhall behavior edit: the shared policy is now SQL-backed and editable in Workspace settings with explicit save. Accepted runs capture its text and revision; member-specific instructions remain separate. Migration `GuildhallBehaviorSettings` seeds the existing text and grants only table SELECT/UPDATE to the runtime identity. Isolated verification is in progress; GuildhallDev application requires separate approval.
+
 Open Guildhall, choose a locally installed model for a guild member, send a message, see the answer arrive, cancel if needed, close/reopen the app, and continue the same session. Export the saved session in a documented format. No cloud account or external service is required after local dependencies/model are installed.
 
 Accepted product choices: a council of persistent guild-member profiles, each with editable identity and instructions and multiple saved sessions; model changes within an existing session affect future replies; select useful local models at the live-testing checkpoint with separate download approval. The original one-assistant decision is superseded by the owner's council-first amendment; the underlying AgentDefinitions/Conversations relationship is extended instead of adding a second agent framework. See [decision 0002](decisions/0002-phase-1.md) and [council profile design](council-profiles-and-memory.md).

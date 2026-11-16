@@ -1,0 +1,2 @@
+namespace Guildhall.AgentHost.Chat;
+

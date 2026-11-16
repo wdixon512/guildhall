@@ -4,6 +4,10 @@ Status: approved companion work track, November 15, 2026. It preserves the maste
 
 ## Why this is needed
 
+Warm-model follow-up: the backend branch adds `-KeepModelWarmSeconds 0..900` (default 0) to the launcher. The SQL/fake-provider suite verifies outgoing retention values 0 and 300. Owner QC after integration/relaunch: send twice using the same model within five minutes and inspect `ollama ps` between messages. Real load-time and memory measurements are still pending.
+
+November 16 owner follow-up: add the [quality/performance acceptance gates](agent-quality-and-performance.md) to Q06: measured cold/warm and CPU/GPU latency with existing models, policy/rules provenance, honest source use, and draft-safe member editing without council dimming. Fake-provider/isolated SQL checks support backend correctness; they do not establish real-model speed or UI usability.
+
 Current automated tests cover Phase 0 status behavior but did not exercise the new chat workflow. Passing those tests did not establish functional chat. The owner received a checklist for features that were still incomplete.
 
 Observed gaps in the current source:

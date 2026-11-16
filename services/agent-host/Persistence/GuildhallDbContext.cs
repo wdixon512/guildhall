@@ -8,6 +8,13 @@ public sealed class ApplicationMetadata
     public Guid InstallationId { get; set; }
 }
 
+public sealed class GuildhallBehaviorSettings
+{
+    public int Id { get; set; }
+    public string Instructions { get; set; } = string.Empty;
+    public long Revision { get; set; }
+}
+
 public sealed class AgentDefinition
 {
     public Guid Id { get; set; }
@@ -86,6 +93,7 @@ public sealed class ChatAttachment
 public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> options) : DbContext(options)
 {
     public DbSet<ApplicationMetadata> ApplicationMetadata => Set<ApplicationMetadata>();
+    public DbSet<GuildhallBehaviorSettings> GuildhallBehaviorSettings => Set<GuildhallBehaviorSettings>();
     public DbSet<AgentDefinition> AgentDefinitions => Set<AgentDefinition>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ChatRun> ChatRuns => Set<ChatRun>();
@@ -96,6 +104,10 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
         modelBuilder.Entity<ApplicationMetadata>().ToTable("ApplicationMetadata");
         modelBuilder.Entity<ApplicationMetadata>().Property(x => x.Id).ValueGeneratedNever();
         modelBuilder.Entity<ApplicationMetadata>().Property(x => x.InstallationId).HasDefaultValueSql("NEWID()");
+        modelBuilder.Entity<GuildhallBehaviorSettings>(e => {
+            e.ToTable("GuildhallBehaviorSettings"); e.HasKey(x => x.Id); e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Instructions).HasMaxLength(4000).IsRequired(); e.Property(x => x.Revision).IsConcurrencyToken();
+        });
         modelBuilder.Entity<AgentDefinition>(e => {
             e.ToTable("AgentDefinitions"); e.HasKey(x => x.Id); e.Property(x => x.Name).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(100).IsRequired(); e.Property(x => x.PortraitId).IsRequired(); e.Property(x => x.CustomPortrait).HasColumnType("nvarchar(max)"); e.Property(x => x.Accent).HasMaxLength(7).IsRequired(); e.Property(x => x.IsArchived).HasDefaultValue(false);

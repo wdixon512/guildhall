@@ -104,17 +104,20 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
             if (run.Status != ChatRunStatus.Running) return;
             var user = run.Messages.Single(x => x.Role == ChatMessageRole.User);
             Guid? interruptedRunId = null;
+            var instructions = run.InstructionsSnapshot;
             if (run.SettingsSnapshotJson is { } settings)
             {
                 using var snapshot = JsonDocument.Parse(settings);
                 if (snapshot.RootElement.TryGetProperty("interruptedRunId", out var value) && value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var id)) interruptedRunId = id;
+                if (snapshot.RootElement.TryGetProperty("guildhallBehavior", out var behavior) && behavior.ValueKind == JsonValueKind.String)
+                    instructions = behavior.GetString() + "\n\nMember instructions:\n" + instructions;
             }
             var priorRuns = await db.ChatRuns.AsNoTracking()
                 .Where(x => x.ConversationId == run.ConversationId && x.TurnNumber < run.TurnNumber && (x.Status == ChatRunStatus.Completed || x.Id == interruptedRunId))
                 .OrderBy(x => x.TurnNumber)
                 .Select(x => new { x.TurnNumber, Messages = x.Messages.Where(m => x.Status == ChatRunStatus.Completed || m.Role == ChatMessageRole.User).Select(m => new { m.Role, m.Text }).ToList() })
                 .ToListAsync(cancellationToken);
-            var messages = new List<object> { new { role = "system", content = run.InstructionsSnapshot } };
+            var messages = new List<object> { new { role = "system", content = instructions } };
             foreach (var prior in priorRuns.OrderBy(x => x.TurnNumber))
             foreach (var message in prior.Messages.OrderBy(x => x.Role == ChatMessageRole.User ? 0 : 1))
                 messages.Add(new { role = message.Role == ChatMessageRole.User ? "user" : "assistant", content = message.Text });
@@ -152,10 +155,9 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
             var options = new Dictionary<string, object> { ["num_thread"] = 4, ["num_ctx"] = 4096 };
             if (!useGpu) options["num_gpu"] = 0;
             // Request-local settings: do not change the shared Ollama service or other clients.
-            // The installed Qwen3 templates open a thinking section. Keep Ollama's
-            // parser enabled so it separates message.thinking from message.content.
-            // Only content is persisted or displayed by Guildhall.
-            var payload = new { model = run.ModelId, stream = true, messages, options, think = run.ModelId.StartsWith("qwen3:", StringComparison.OrdinalIgnoreCase), keep_alive = 0 };
+            // Avoid spending CPU on a hidden reasoning stream before the visible answer.
+            var keepAliveSeconds = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
+            var payload = new { model = run.ModelId, stream = true, messages, options, think = false, keep_alive = keepAliveSeconds };
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat") { Content = JsonContent.Create(payload) };
             using var response = await clients.CreateClient("ollama-chat").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
