@@ -16,6 +16,19 @@ export function starterSuggestions(profile?: Pick<AgentProfile, 'role' | 'instru
   return ['Explore an idea', 'Work through a question', 'Plan a next step'];
 }
 
+export function waitingMessages(name: string, model?: string | null): string[] {
+  const member = name.trim() || 'The guild member';
+  const selectedModel = model?.trim();
+  return [
+    `${member}'s reply is in progress.`,
+    selectedModel ? `Waiting for ${selectedModel} to return the first text.` : 'Waiting for the model to return the first text.',
+    'The response will appear here as it arrives.',
+    'No response text has arrived yet.',
+    'You can keep browsing while this reply runs.',
+    'Guildhall is waiting for the next response update.',
+  ];
+}
+
 export function queuedPairs(messages: MessageView[]): Set<number> {
   return new Set(messages.filter(message => message.role === 'assistant' && message.status === 'Queued').map(message => message.turnNumber));
 }
