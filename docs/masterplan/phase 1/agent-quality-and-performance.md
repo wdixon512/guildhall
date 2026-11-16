@@ -42,9 +42,9 @@ Backend verification: `dotnet test tests/Guildhall.AgentHost.Tests -c Release` w
 After these changes are integrated into the active checkout, at the next agreed restart:
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Start-Dev.ps1
+pwsh -NoProfile -File G:\repos\guildhall\scripts\startup\Start-Dev.ps1
 # Optional alternative for an explicitly GPU-enabled session:
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Start-Dev.ps1 -UseGpu
+pwsh -NoProfile -File G:\repos\guildhall\scripts\startup\Start-Dev.ps1 -UseGpu
 ```
 
 Run one launch command when the previous development session is closed. In a retained member session, send a new request for a practical proposal based on supplied facts; verify a useful concrete result, modest tone and honest evidence limits. Ask for current research without providing sources and verify it does not claim a search it cannot perform. Compare the same short prompt using already installed models. Check SQL history survives. After the member editor branch is integrated, confirm that typing remains responsive while switching members/sessions, drafts return to the correct member, save failures retain the draft and retry, and messages wait for the active member's instruction save before sending.

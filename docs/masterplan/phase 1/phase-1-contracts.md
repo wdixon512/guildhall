@@ -1,6 +1,6 @@
 # Phase 1 contracts — proposed for review
 
-This began as a planning artifact; owner-approved amendments and implementation below supersede the original single-flight/no-queue assumptions where stated. See [the Phase 1 plan](phase-1.md) and [roadmap amendments](product-roadmap-amendments.md).
+This began as a planning artifact; owner-approved amendments and implementation below supersede the original single-flight/no-queue assumptions where stated. See [the Phase 1 plan](phase-1.md) and [roadmap amendments](../product-roadmap-amendments.md).
 
 ## Existing boundaries to preserve
 

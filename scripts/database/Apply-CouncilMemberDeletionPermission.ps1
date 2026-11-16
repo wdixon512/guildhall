@@ -1,10 +1,11 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([switch]$Execute)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
+
 $databaseName = 'GuildhallDev'
-$targetMigration = '20261116012111_CouncilProfiles'
-$expectedPreviousMigration = '20261115231118_ChatAttachments'
+$expectedPreviousMigration = '20261116021040_CouncilMemberArchive'
+$targetMigration = '20261116134707_CouncilMemberDeletionPermission'
 $connection = Get-LocalSqlConnection -Database $databaseName
 $db = [System.Data.SqlClient.SqlConnection]::new($connection)
 try {
@@ -20,13 +21,23 @@ try {
     if ($actualMigration -eq $targetMigration) { Write-Output "GuildhallDev already has $targetMigration; no changes made."; return }
     if ($actualMigration -ne $expectedPreviousMigration) { throw "Expected $expectedPreviousMigration but found '$actualMigration'. Review the database plan before continuing." }
 } finally { $db.Dispose() }
-Write-Output "Target: localhost / GuildhallDev"
+
+Write-Output "Target: localhost / $databaseName"
 Write-Output "Migration: $targetMigration"
+Write-Output 'Scope: grant DELETE only on dbo.AgentDefinitions to the existing guildhall_runtime principal. No schema or data changes.'
+$previewPath = Join-Path $LocalDirectory "$databaseName.member-delete-permission.preview.sql"
+if (-not (Test-Path -LiteralPath $LocalDirectory)) { New-Item -ItemType Directory -Path $LocalDirectory | Out-Null }
+Push-Location $RepoRoot
+try {
+    Invoke-Checked dotnet @('ef','migrations','script',$expectedPreviousMigration,$targetMigration,'--project','services/agent-host','--startup-project','services/agent-host','--configuration','Release','--output',$previewPath)
+} finally { Pop-Location }
+Write-Output "Generated SQL preview: $previewPath"
 if (-not $Execute) {
     Write-Output 'Preview only. No database changes were made.'
-    Write-Output 'After approving docs/council-profile-migration-approval.md, run: pwsh -NoProfile -File G:\repos\guildhall\scripts\Apply-CouncilProfiles.ps1 -Execute'
+    Write-Output 'Run this script with -Execute only after approving docs/masterplan/phase 1/council-member-deletion-permission-approval.md.'
     return
 }
+
 $previous = $env:ConnectionStrings__GuildhallMigrations
 Push-Location $RepoRoot
 try {

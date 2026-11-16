@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([switch]$Json)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 
 $currentFingerprint = Get-SourceFingerprint
 $sessionRoot = Join-Path $LocalDirectory 'dev-sessions'

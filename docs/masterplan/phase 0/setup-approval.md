@@ -4,7 +4,7 @@ The user explicitly approved development SQL provisioning plus isolated SQL test
 
 ## SQL Server development provisioning
 
-Run `./scripts/Provision-Database.ps1 -Execute` once, after approval. Without `-Execute`, the script only prints its plan.
+Run `./scripts/database/Provision-Database.ps1 -Execute` once, after approval. Without `-Execute`, the script only prints its plan.
 
 - Connect only to the existing default `localhost` instance using the current Windows identity, with encryption and the accepted local certificate exception.
 - Refuse to proceed if `GuildhallDev`, `guildhall_runtime`, or the local runtime credential already exists. Read-only checks found the database/login names unused.

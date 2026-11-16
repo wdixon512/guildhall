@@ -1,11 +1,11 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([switch]$Execute)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 
 if (-not $IsWindows) { throw 'Phase 0 credential provisioning requires Windows DPAPI.' }
 if (-not $Execute) {
-    Write-Output 'PLAN ONLY: localhost; create GuildhallDev and guildhall_runtime; Windows migrations; runtime SELECT on metadata/history only; DPAPI credential shared across worktrees in LocalAppData. See docs/setup-approval.md. Pass -Execute only after approval.'
+    Write-Output 'PLAN ONLY: localhost; create GuildhallDev and guildhall_runtime; Windows migrations; runtime SELECT on metadata/history only; DPAPI credential shared across worktrees in LocalAppData. See docs/masterplan/phase 0/setup-approval.md. Pass -Execute only after approval.'
     return
 }
 New-Item -ItemType Directory -Path (Split-Path -Parent $CredentialPath) -Force | Out-Null

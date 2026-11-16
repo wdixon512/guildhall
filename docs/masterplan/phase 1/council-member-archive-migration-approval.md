@@ -22,7 +22,7 @@ GO
 The existing guarded command applies **all pending migrations**, so recheck the source migration list and database checkpoint immediately before execution; stop if anything beyond this reviewed migration is pending. Approval covers this migration only.
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Migrate-Database.ps1 -DatabaseName GuildhallDev -Execute
+pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Migrate-Database.ps1 -DatabaseName GuildhallDev -Execute
 ```
 
 ## Completed backend verification
@@ -68,7 +68,7 @@ Read-only checks confirmed `IsArchived` is non-null `bit` with default false, al
 Native member lifecycle interaction has not been exercised against GuildhallDev in this follow-up. The browser fixture and independent rendered UI review recorded above remain the interaction evidence. Keep the existing window open for owner functional QC:
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Get-DevStatus.ps1
+pwsh -NoProfile -File G:\repos\guildhall\scripts\startup\Get-DevStatus.ps1
 ```
 
 1. Right-click a member heading or use **Member actions for …**. Choose **Archive member**, check that the confirmation says saved sessions are kept, then Cancel once.

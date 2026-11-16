@@ -22,13 +22,13 @@ Its `Down` operation revokes that table permission. This permission change does 
 The guarded command below checks that GuildhallDev exists and that its current migration is exactly the expected prior migration. Without `-Execute`, it performs only that read-only preflight and prints the planned scope. Do not pass `-Execute` until this specific change has been approved.
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall-frontend\scripts\Apply-CouncilMemberDeletionPermission.ps1
+pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Apply-CouncilMemberDeletionPermission.ps1
 ```
 
 After explicit approval, the execute form is:
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall-frontend\scripts\Apply-CouncilMemberDeletionPermission.ps1 -Execute
+pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Apply-CouncilMemberDeletionPermission.ps1 -Execute
 ```
 
 The script is intentionally not run as part of preparing this change.

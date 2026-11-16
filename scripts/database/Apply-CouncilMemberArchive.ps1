@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([switch]$Execute)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 $databaseName = 'GuildhallDev'
 $targetMigration = '20261116021040_CouncilMemberArchive'
 $expectedPreviousMigration = '20261116012111_CouncilProfiles'
@@ -25,7 +25,7 @@ Write-Output "Migration: $targetMigration"
 Write-Output "Scope: add dbo.AgentDefinitions.IsArchived bit NOT NULL DEFAULT 0. Preserve all members, sessions and messages; no grant changes."
 if (-not $Execute) {
     Write-Output 'Preview only. No database changes were made.'
-    Write-Output 'After approving docs/council-member-archive-migration-approval.md, run: pwsh -NoProfile -File G:\repos\guildhall\scripts\Apply-CouncilMemberArchive.ps1 -Execute'
+    Write-Output 'After approving docs/masterplan/phase 1/council-member-archive-migration-approval.md, run: pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Apply-CouncilMemberArchive.ps1 -Execute'
     return
 }
 $previous = $env:ConnectionStrings__GuildhallMigrations

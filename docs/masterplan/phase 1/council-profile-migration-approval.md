@@ -12,16 +12,16 @@ The migration leaves conversation IDs, titles, selected models, archives, chat r
 
 The desktop imports the former device-wide appearance preference once into the first migrated legacy profile only. This can preserve the current name/role/portrait/accent, including a bounded JPEG/PNG/WebP portrait. It cannot recover a profile value previously overwritten by the old shared editor. The other profiles keep their separate SQL defaults. After the first import, changing one member updates only that member and all sessions linked to it.
 
-The exact migration implementation is [20261116012111_CouncilProfiles.cs](../services/agent-host/Persistence/Migrations/20261116012111_CouncilProfiles.cs); the checked-in EF model snapshot records the resulting schema. A dry-run of the guarded script checks the existing migration checkpoint and makes no changes:
+The exact migration implementation is [20261116012111_CouncilProfiles.cs](../../../services/agent-host/Persistence/Migrations/20261116012111_CouncilProfiles.cs); the checked-in EF model snapshot records the resulting schema. A dry-run of the guarded script checks the existing migration checkpoint and makes no changes:
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Apply-CouncilProfiles.ps1
+pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Apply-CouncilProfiles.ps1
 ```
 
 For historical reference, the approval applied this migration and its table-specific `INSERT` grant using:
 
 ```powershell
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Apply-CouncilProfiles.ps1 -Execute
+pwsh -NoProfile -File G:\repos\guildhall\scripts\database\Apply-CouncilProfiles.ps1 -Execute
 ```
 
 The script refused any database name other than GuildhallDev and refused to run if the current migration checkpoint differed from the one above. It used the existing Windows migration identity. Tests create and drop only their own `GuildhallTest_*` databases; the isolated tests do not apply this change to GuildhallDev.

@@ -31,7 +31,7 @@ The migration and cascade permission passed the isolated SQL integration test ag
 The approved command used:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Migrate-Database.ps1 -DatabaseName GuildhallDev
+pwsh -NoProfile -File .\scripts\database\Migrate-Database.ps1 -DatabaseName GuildhallDev
 ```
 
 The migration is additive and reversible. Its runtime DELETE authority is limited to conversation parent rows and their dependent-row cascades.

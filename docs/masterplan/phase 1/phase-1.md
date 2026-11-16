@@ -12,7 +12,7 @@ Guildhall behavior edit: the shared policy is now SQL-backed and editable in Wor
 
 Open Guildhall, choose a locally installed model for a guild member, send a message, see the answer arrive, cancel if needed, close/reopen the app, and continue the same session. Export the saved session in a documented format. No cloud account or external service is required after local dependencies/model are installed.
 
-Accepted product choices: a council of persistent guild-member profiles, each with editable identity and instructions and multiple saved sessions; model changes within an existing session affect future replies; select useful local models at the live-testing checkpoint with separate download approval. The original one-assistant decision is superseded by the owner's council-first amendment; the underlying AgentDefinitions/Conversations relationship is extended instead of adding a second agent framework. See [decision 0002](decisions/0002-phase-1.md) and [council profile design](council-profiles-and-memory.md).
+Accepted product choices: a council of persistent guild-member profiles, each with editable identity and instructions and multiple saved sessions; model changes within an existing session affect future replies; select useful local models at the live-testing checkpoint with separate download approval. The original one-assistant decision is superseded by the owner's council-first amendment; the underlying AgentDefinitions/Conversations relationship is extended instead of adding a second agent framework. See [decision 0002](../../decisions/0002-phase-1.md) and [council profile design](council-profiles-and-memory.md).
 
 ## Scope and engineering approach
 
@@ -27,9 +27,9 @@ The detailed, reviewable defaults are in [phase-1-contracts.md](phase-1-contract
 - Preserve all history. Refuse an oversized context with an explanation rather than silently crop or summarize it. Validate model-dependent settings during live testing.
 - Safe Markdown/GFM rendering (never raw HTML), bounded requests/output, paginated history, and versioned JSON export. No arbitrary filesystem permissions.
 
-Excluded: cloud inference, a second real provider, tools/MCP, full-text search, import, autonomous cross-member delegation, background jobs, remote access, vector memory, automatic backups, packaging/signing/deployment, and infrastructure changes. Persistent member profiles and multiple sessions per member are in scope through the accepted council amendment; this does not enable parallel inference (the host still permits one active inference). A narrow fake provider tests independence without building Phase 2. Attachment format limits and storage rules are in [decision 0004](decisions/0004-chat-attachments.md); that database migration was explicitly approved and applied to GuildhallDev on November 15, 2026.
+Excluded: cloud inference, a second real provider, tools/MCP, full-text search, import, autonomous cross-member delegation, background jobs, remote access, vector memory, automatic backups, packaging/signing/deployment, and infrastructure changes. Persistent member profiles and multiple sessions per member are in scope through the accepted council amendment; this does not enable parallel inference (the host still permits one active inference). A narrow fake provider tests independence without building Phase 2. Attachment format limits and storage rules are in [decision 0004](../../decisions/0004-chat-attachments.md); that database migration was explicitly approved and applied to GuildhallDev on November 15, 2026.
 
-**Owner-requested Phase 1 scope amendments:** add conversation archive, restore, and confirmed permanent deletion; rename and auto-title chats; visible response checkpoints, Stop, queued follow-ups and Send Now; attachments with local storage, safe Markdown, inline images and download actions; copy controls; keyboard scaling plus a display-scale setting; collapsible workspace sections; and explicit disabled placeholders for future workspace tools, provider connections, access modes, appearance options, usage, and scheduled tasks. Chats pin to the latest message on selection/send and while streaming unless the reader scrolls upward. These additions supersede the earlier exclusions for archive/delete, attachments and Markdown. Permanent deletion is refused while a response is active or queued. Runtime DELETE permission is limited to parent Conversations rows; SQL cascades remove dependent records. See [the roadmap amendments](product-roadmap-amendments.md) for later capability boundaries.
+**Owner-requested Phase 1 scope amendments:** add conversation archive, restore, and confirmed permanent deletion; rename and auto-title chats; visible response checkpoints, Stop, queued follow-ups and Send Now; attachments with local storage, safe Markdown, inline images and download actions; copy controls; keyboard scaling plus a display-scale setting; collapsible workspace sections; and explicit disabled placeholders for future workspace tools, provider connections, access modes, appearance options, usage, and scheduled tasks. Chats pin to the latest message on selection/send and while streaming unless the reader scrolls upward. These additions supersede the earlier exclusions for archive/delete, attachments and Markdown. Permanent deletion is refused while a response is active or queued. Runtime DELETE permission is limited to parent Conversations rows; SQL cascades remove dependent records. See [the roadmap amendments](../product-roadmap-amendments.md) for later capability boundaries.
 
 **Council direction accepted:** persistent bot profiles with multiple sessions, profile-specific identity and Markdown instructions, reviewed shared “About you” preferences, and private bot/project memory. Profile schema/API/editor and member-grouped sessions are active; the SQL migration was applied to GuildhallDev on November 16, 2026. Shared/private memory is not implemented. See [council profiles and memory](council-profiles-and-memory.md).
 
@@ -200,8 +200,8 @@ For authorized SQL checks on the same local instance:
 
 ```powershell
 $env:GUILDHALL_TEST_SQL_CONNECTION = 'Server=localhost;Database=master;Integrated Security=true;Encrypt=true;TrustServerCertificate=true'
-./scripts/Verify.ps1 -IncludeSql
-./scripts/Smoke-Host.ps1
+./scripts/misc/Verify.ps1 -IncludeSql
+./scripts/misc/Smoke-Host.ps1
 ```
 
 Extend `Verify.ps1` to include new SQL categories and frontend tests without silently skipping them. SQL fixtures create/drop only owned scratch databases; transports/providers are deterministic fakes. Use real SQL Server for transactions, concurrency, permissions, and recovery; no EF in-memory substitute. Do not stop shared services or open ports to simulate failures.
@@ -210,7 +210,7 @@ Final native verification, after a live model is selected:
 
 ```powershell
 npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle
-pwsh -NoProfile -File ./scripts/Start-Dev.ps1 -BuiltDesktop
+pwsh -NoProfile -File ./scripts/startup/Start-Dev.ps1 -BuiltDesktop
 ```
 
 ## Phase 1 completion checklist
@@ -255,7 +255,7 @@ The user has already chosen the three product options. Review the proposed engin
 From `G:\repos\guildhall` in PowerShell 7, the user-facing QC command will be:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Start-Dev.ps1 -BuiltDesktop
+pwsh -NoProfile -File .\scripts\startup\Start-Dev.ps1 -BuiltDesktop
 ```
 
 Then exercise the phase's visible flows in the native window: open/create a conversation, select a local model, send a message, observe the response, cancel a response, restart, continue history, and export. I run the automated unit/deterministic checks separately. SQL integration, backup/restore, and live-model setup remain separate approval checkpoints.
@@ -265,7 +265,7 @@ Then exercise the phase's visible flows in the native window: open/create a conv
 After the SQL migration/grants and a local model have been explicitly approved and applied:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Start-Dev.ps1 -BuiltDesktop
+pwsh -NoProfile -File .\scripts\startup\Start-Dev.ps1 -BuiltDesktop
 ```
 
 In the native window, verify:

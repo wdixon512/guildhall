@@ -179,3 +179,10 @@ body{overscroll-behavior:none}
 /* Keep the member resize hit target inside its horizontally clipped panel. */
 .member-panel > .pane-resizer.member-resizer{left:0}
 .member-resizer>span{transform:translateX(-13px)}
+.thinking-toggle{display:inline-flex;align-items:center;gap:10px;padding:5px 9px;margin-bottom:10px;font-size:12px;background:transparent;color:var(--brass);border-color:var(--line)}
+.thinking-status,.thinking-note{color:#b8aaa1;font-size:12px}
+.thinking-pane{position:fixed;inset:0 0 0 auto;margin:0;height:100dvh;max-height:100dvh;max-width:calc(100vw - 24px);box-sizing:border-box;padding:24px 24px 24px 32px;border:0;border-left:1px solid var(--line);background:#211b1f;color:#eadbc9;overflow:hidden;display:flex;flex-direction:column;gap:16px}
+.thinking-pane::backdrop{background:#0006}
+.thinking-pane header{display:flex;align-items:center;justify-content:space-between;gap:12px}.thinking-pane h2{font-size:18px}.thinking-pane header button{min-width:36px;min-height:36px}
+.thinking-content{min-height:0;overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;font-size:13px}
+.thinking-resizer{left:0}.thinking-toggle:focus-visible{outline:2px solid var(--brass);outline-offset:2px}

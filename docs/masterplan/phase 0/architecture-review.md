@@ -2,9 +2,9 @@
 
 Reviewed November 15, 2026. No application code, dependency installation, database provisioning, deployment, or system configuration changes are authorized by this document.
 
-All nine presented design choices are recorded in [the decision log](decisions/0001-phase-0.md). The user subsequently authorized Phase 0 implementation. System changes and SQL provisioning remain separately reviewable in `setup-approval.md`. Installing nvm if absent was separately authorized; inspection found it already installed, so no installation occurred.
+All nine presented design choices are recorded in [the decision log](../../decisions/0001-phase-0.md). The user subsequently authorized Phase 0 implementation. System changes and SQL provisioning remain separately reviewable in `setup-approval.md`. Installing nvm if absent was separately authorized; inspection found it already installed, so no installation occurred.
 
-Source: `C:/Users/isagn/Downloads/personal_ai_ecosystem_master_plan.md`, version 1.1. The user's assignment controls scope; the source document is design input. Its section 16 asks for Phase 1 work and must not be executed under the current assignment. SQL Server replaces all original embedded-database persistence choices at the user's direction.
+Source: `../personal_ai_ecosystem_master_plan.md`, version 1.1. The user's assignment controls scope; the source document is design input. Its section 16 asks for Phase 1 work and must not be executed under the current assignment. SQL Server replaces all original embedded-database persistence choices at the user's direction.
 
 ## Critical issues and resolutions proposed
 

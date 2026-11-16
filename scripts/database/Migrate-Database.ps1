@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([ValidateSet('GuildhallDev')][string]$DatabaseName = 'GuildhallDev', [switch]$Execute)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 Write-Output "Migration target: localhost / $DatabaseName; Windows identity; encrypted local connection."
 $connection = Get-LocalSqlConnection -Database $DatabaseName
 $db = [System.Data.SqlClient.SqlConnection]::new($connection)

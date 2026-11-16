@@ -4,7 +4,7 @@ Owner request: improve council/session hierarchy, response feedback, queue densi
 
 ## Roadmap and boundaries
 
-Master source: `C:/Users/isagn/Downloads/personal_ai_ecosystem_master_plan.md` v1.1, referenced in `docs/architecture-review.md`. This batch advances Phase 1 chat/council usability under `docs/phase-1.md` and the owner's amendments in `docs/product-roadmap-amendments.md`. It does not implement tools, schedulers, cloud providers or autonomous activity. Starter suggestions are deterministic local examples based on member role/instructions, editable before sending. Loading words are cosmetic waiting feedback, never claims of tool work.
+Master source: `docs/masterplan/personal_ai_ecosystem_master_plan.md`, referenced in `docs/masterplan/phase 0/architecture-review.md`. This batch advances Phase 1 chat/council usability under `docs/masterplan/phase 1/phase-1.md` and the owner's amendments in `docs/masterplan/product-roadmap-amendments.md`. It does not implement tools, schedulers, cloud providers or autonomous activity. Starter suggestions are deterministic local examples based on member role/instructions, editable before sending. Loading words are cosmetic waiting feedback, never claims of tool work.
 
 ## Implementation sequence and ownership
 
@@ -51,7 +51,7 @@ The owner approved the [permission upgrade](council-member-deletion-permission-a
 ```powershell
 Set-Location G:\repos\guildhall
 npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle
-pwsh -NoProfile -File .\scripts\Start-Dev.ps1 -BuiltDesktop
+pwsh -NoProfile -File .\scripts\startup\Start-Dev.ps1 -BuiltDesktop
 ```
 
 Close any existing development app through its owner before relaunching; the launch script refuses occupied ports. Do not copy runtime credentials into tracked files or another worktree.

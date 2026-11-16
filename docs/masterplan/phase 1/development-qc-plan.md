@@ -87,10 +87,10 @@ Accept: a new coding session can identify and drive the correct application, run
 Proposed commands, not yet implemented:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Start-Qc.ps1
-pwsh -NoProfile -File .\scripts\Get-DevStatus.ps1 -Json
+pwsh -NoProfile -File .\scripts\startup\Start-Qc.ps1
+pwsh -NoProfile -File .\scripts\startup\Get-DevStatus.ps1 -Json
 npm.cmd --prefix apps/desktop run qc -- --scenario chat-basic
-pwsh -NoProfile -File .\scripts\Stop-Qc.ps1
+pwsh -NoProfile -File .\scripts\startup\Stop-Qc.ps1
 ```
 
 Implementation may consolidate commands into one lifecycle script. It must expose a stable session handle and use ignored `.local/qc/<session>/` for ownership records and sanitized evidence. The owner receives a single tested development launch command and a short functional checklist; the agent runs automation.

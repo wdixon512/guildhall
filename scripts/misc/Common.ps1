@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $LocalDirectory = Join-Path $RepoRoot '.local'
 $LegacyCredentialPath = Join-Path $LocalDirectory 'runtime.credential.xml'
 $SharedCredentialDirectory = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Guildhall/dev' } else { Join-Path $HOME '.local/share/Guildhall/dev' }

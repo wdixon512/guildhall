@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.editorconfig'
+      - 'scripts/sql/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.cursor/**'
+      - '.editorconfig'
+      - 'scripts/sql/**'
+  workflow_dispatch:
+    inputs:
+      run_rust_tests:
+        description: 'Force Rust/Tauri cargo test even if src-tauri/ did not change'
+        required: false
+        default: false
+        type: boolean
+
+# Cancel superseded runs immediately to save billable minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NO_UPDATE_NOTIFIER: '1'
+
+jobs:
+  verify:
+    name: Build & Test (1x Linux Runner)
+    # ubuntu-latest bills at 1x (vs 2x for windows-latest) and boots in seconds.
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+          cache: 'npm'
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Validate PowerShell 7 script syntax
+        shell: pwsh
+        run: |
+          $scripts = Get-ChildItem -Path "scripts" -Recurse -File -Filter "*.ps1"
+          foreach ($script in $scripts) {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors) {
+                  throw "Syntax error in $($script.FullName): $($errors | Out-String)"
+              }
+          }
+          Write-Output "Validated $($scripts.Count) PowerShell scripts."
+
+      - name: Restore, build, and run deterministic .NET tests
+        run: |
+          dotnet restore Guildhall.slnx --locked-mode
+          dotnet build Guildhall.slnx --no-restore -c Release
+          dotnet test tests/Guildhall.AgentHost.Tests/Guildhall.AgentHost.Tests.csproj --no-build -c Release --filter "Category!=SqlIntegration"
+
+      - name: Install, typecheck, test, and build frontend
+        working-directory: apps/desktop
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run test -- --run
+          npm run build
+
+      - name: Check if Rust/Tauri sources changed
+        id: rust_changes
+        run: |
+          if [ "${{ inputs.run_rust_tests }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^apps/desktop/src-tauri/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Rust bootstrap tests (only when src-tauri/ changes)
+        if: steps.rust_changes.outputs.changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml

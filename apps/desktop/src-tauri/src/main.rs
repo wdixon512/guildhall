@@ -28,7 +28,7 @@ fn bootstrap() -> Result<Bootstrap, String> {
     validate(
         std::env::var("GUILDHALL_HOST_URL").unwrap_or_else(|_| "http://127.0.0.1:43120".into()),
         std::env::var("GUILDHALL_SESSION_TOKEN")
-            .map_err(|_| "Start Guildhall with scripts/Start-Dev.ps1")?,
+            .map_err(|_| "Start Guildhall with scripts/startup/Start-Dev.ps1")?,
     )
 }
 

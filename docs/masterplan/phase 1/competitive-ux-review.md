@@ -10,7 +10,7 @@ The master architecture remains suitable: a project-owned host, provider adapter
 
 ## Method and limits
 
-Reviewed current `apps/desktop/src/App.tsx`, `api.ts`, `style.css`, the host's `ChatRunner`, `ChatEndpoints`, `Program`, persistence records, development launcher, Phase 1 contracts, QC plan and master roadmap at `C:/Users/isagn/Downloads/personal_ai_ecosystem_master_plan.md`. Earlier screenshots and owner QC reports provide observed behavior. This review did not exercise fresh live competitors or certify every current Guildhall workflow.
+Reviewed current `apps/desktop/src/App.tsx`, `api.ts`, `style.css`, the host's `ChatRunner`, `ChatEndpoints`, `Program`, persistence records, development launcher, Phase 1 contracts, QC plan and master roadmap at `docs/masterplan/personal_ai_ecosystem_master_plan.md`. Earlier screenshots and owner QC reports provide observed behavior. This review did not exercise fresh live competitors or certify every current Guildhall workflow.
 
 Competitor research uses official documentation. Surface matters: Codex desktop, CLI and IDE extension; Claude Code desktop and terminal; Cursor editor/Agents Window and selected tool documentation. A documented capability on one surface does not prove identical behavior elsewhere. Account, version, OS, model and deployment affect availability. Some old Codex links redirect to ChatGPT Learn; the citations below identify the actual destination. An inaccessible guessed route was not used as evidence.
 

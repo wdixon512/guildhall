@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param()
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 $failures = [System.Collections.Generic.List[string]]::new()
 foreach ($name in @('node','npm.cmd','dotnet','cargo','rustc','sqlcmd')) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { $failures.Add("Missing command: $name") }

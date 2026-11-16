@@ -17,7 +17,7 @@ The additive migration creates `dbo.ChatAttachments`, a foreign key to `dbo.Chat
 The approved apply command:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\Migrate-Database.ps1 -DatabaseName GuildhallDev
+pwsh -NoProfile -File .\scripts\database\Migrate-Database.ps1 -DatabaseName GuildhallDev
 ```
 
 It applies the pending `20261115231118_ChatAttachments` migration and the table-specific grant. Applied after explicit owner approval. Verification using the runtime identity confirmed SELECT/INSERT/UPDATE and no direct DELETE permission on this table. A temporary authenticated host reported SQL ready and successfully opened all seven loaded active/archived saved conversations; no inference was requested.

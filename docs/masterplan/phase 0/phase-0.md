@@ -1,6 +1,6 @@
 # Phase 0 implementation plan — locally implemented and verified
 
-The nine presented design choices are accepted in [the decision log](decisions/0001-phase-0.md). The user subsequently authorized building Phase 0 and explicitly approved the concrete SQL, Node, and Ollama setup actions. See [the verification record](verification.md) for actual implementation and check results; the task descriptions below retain the agreed acceptance contract.
+The nine presented design choices are accepted in [the decision log](../../decisions/0001-phase-0.md). The user subsequently authorized building Phase 0 and explicitly approved the concrete SQL, Node, and Ollama setup actions. See [the verification record](verification.md) for actual implementation and check results; the task descriptions below retain the agreed acceptance contract.
 
 ## Outcome and scope
 
@@ -65,11 +65,11 @@ Commands run from the repository root in PowerShell; use `npm.cmd` to avoid chan
 
 ### P05 — SQL Server schema and migration pipeline
 
-- Files: host `Persistence/`, EF registrations, local migration tool configuration, backend `Persistence*` tests, `scripts/Migrate-Database.ps1`.
+- Files: host `Persistence/`, EF registrations, local migration tool configuration, backend `Persistence*` tests, `scripts/database/Migrate-Database.ps1`.
 - Depends on: P02 and approved dedicated development/test databases and identities. Provisioning scripts must be reviewed before execution; never infer authorization to modify an existing SQL instance from plan approval alone.
 - Work: use EF Core SQL Server and its local tooling; add one bootstrap metadata table and first migration. Migration is an explicit command using the existing Windows identity; runtime uses a dedicated restricted SQL login and never upgrades schema. Store its credentials in OS-protected local storage and inject only into the host environment. The wrapper prints a sanitized target summary and refuses system databases or an unexpected configured database name. Require separate DDL and runtime identities. No automatic create/drop, rollback-to-zero, or destructive reset command.
 - Acceptance: empty approved database upgrades once; second invocation changes nothing; record survives host restart; failed transactional migration leaves no falsely applied history; runtime identity can read metadata but cannot alter schema. No conversation/agent schema. Tests use real SQL Server, uniquely named `GuildhallTest_*` databases, and clean up only databases created by that test run.
-- Verify: `dotnet ef migrations script --project services/agent-host --startup-project services/agent-host --idempotent --output .local/migrations.sql`, review the generated SQL, then `./scripts/Migrate-Database.ps1 -DatabaseName GuildhallDev` only against the approved target; `dotnet test tests/Guildhall.AgentHost.Tests --filter Persistence` with the explicit test connection configured. Verify runtime schema changes are denied using the dedicated runtime SQL login; shared-identity execution does not satisfy the accepted separation requirement.
+- Verify: `dotnet ef migrations script --project services/agent-host --startup-project services/agent-host --idempotent --output .local/migrations.sql`, review the generated SQL, then `./scripts/database/Migrate-Database.ps1 -DatabaseName GuildhallDev` only against the approved target; `dotnet test tests/Guildhall.AgentHost.Tests --filter Persistence` with the explicit test connection configured. Verify runtime schema changes are denied using the dedicated runtime SQL login; shared-identity execution does not satisfy the accepted separation requirement.
 - Model: stronger reasoning for schema/permissions/failure review; bounded implementation with lightweight model.
 
 ### P06 — Database readiness endpoint
@@ -101,20 +101,20 @@ Commands run from the repository root in PowerShell; use `npm.cmd` to avoid chan
 
 ### P09 — Development launcher and prerequisite checker
 
-- Files: `scripts/Check-Prerequisites.ps1`, `scripts/Start-Dev.ps1`, setup documentation; configuration plumbing only if required by the agreed contract.
+- Files: `scripts/startup/Check-Prerequisites.ps1`, `scripts/startup/Start-Dev.ps1`, setup documentation; configuration plumbing only if required by the agreed contract.
 - Depends on: P03, P04, P06, P07.
 - Work: read-only prerequisite checker reports actionable gaps. Launcher generates a fresh cryptographic token per session, passes it through child environments, starts host, awaits authenticated health, then starts Tauri dev. Keep logs sanitized. Launch background helpers hidden on Windows.
 - Acceptance: host and Vite bind loopback; occupied ports fail without process termination; early host exit/timeout is reported; closing launcher/Ctrl+C cleans only owned child process trees. Restart recovers connectivity without changing SQL metadata. SQL and Ollama are checked but never started, stopped, installed, or reconfigured by these scripts. No migration on launch. No token in process command-line arguments or persistent state.
-- Verify: `./scripts/Check-Prerequisites.ps1`, `./scripts/Start-Dev.ps1`; manual failure scenarios with a temporary port occupant and invalid dependency endpoints. Inspect owned process cleanup and logs. Do not stop shared services to simulate failure.
+- Verify: `./scripts/startup/Check-Prerequisites.ps1`, `./scripts/startup/Start-Dev.ps1`; manual failure scenarios with a temporary port occupant and invalid dependency endpoints. Inspect owned process cleanup and logs. Do not stop shared services to simulate failure.
 - Model: lightweight; escalate only unresolved Windows lifecycle or cross-process authentication faults.
 
 ### P10 — Verification entry point and Phase 0 review
 
-- Files: `scripts/Verify.ps1`, README, verification record; fixes stay within Phase 0.
+- Files: `scripts/misc/Verify.ps1`, README, verification record; fixes stay within Phase 0.
 - Depends on: P05–P09.
 - Work: aggregate required checks, document environment variables and failures, and complete the native-window smoke checklist below. Avoid introducing a WebDriver/CI platform for a single status screen.
 - Acceptance: commands propagate failures; deterministic checks run without Ollama/cloud accounts; SQL integration checks use explicit isolated targets. Report skipped integration prerequisites separately. Full Phase 0 verification must fail if required SQL/live-desktop checks are skipped or unresolved.
-- Verify: `./scripts/Verify.ps1` for deterministic checks, `./scripts/Verify.ps1 -IncludeSql` for all automated checks, then the manual native-window checks. Required SQL configuration is described below. No pass claim based solely on a browser-rendered React test.
+- Verify: `./scripts/misc/Verify.ps1` for deterministic checks, `./scripts/misc/Verify.ps1 -IncludeSql` for all automated checks, then the manual native-window checks. Required SQL configuration is described below. No pass claim based solely on a browser-rendered React test.
 - Model: lightweight; stronger model only for a specific unresolved architectural defect.
 
 ## Proposed configuration and command contract
@@ -144,8 +144,8 @@ npm.cmd --prefix apps/desktop run typecheck
 npm.cmd --prefix apps/desktop run test -- --run
 npm.cmd --prefix apps/desktop run build
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-./scripts/Verify.ps1 -IncludeSql
-./scripts/Start-Dev.ps1
+./scripts/misc/Verify.ps1 -IncludeSql
+./scripts/startup/Start-Dev.ps1
 ```
 
 `Verify.ps1` must run the listed build/typecheck/test/Cargo checks and propagate nonzero exits. SQL tests carry `Category=SqlIntegration`; `-IncludeSql` validates the explicit test connection then runs them. Without that switch it reports SQL checks as not run. External downloads may be needed for initial dependency restoration; restored application runtime must operate with external networking unavailable. This does not require a global package installation or mandatory Docker.

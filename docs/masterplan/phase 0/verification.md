@@ -13,7 +13,7 @@ Verified locally on Windows on November 15, 2026. Phase 0 is implemented and the
 
 ## Automated results
 
-`./scripts/Verify.ps1 -IncludeSql` passed:
+`./scripts/misc/Verify.ps1 -IncludeSql` passed:
 
 - .NET solution builds with zero warnings/errors.
 - 33 deterministic backend tests pass: local authentication, allowed origins/Host, health/readiness, configuration boundaries, and discovery failure/timeout/cancellation/size/JSON handling.
@@ -24,12 +24,12 @@ Verified locally on Windows on November 15, 2026. Phase 0 is implemented and the
 
 Total: 46 tests passed. SQL integration tests leave no scratch databases behind; verified after the completed run. `dotnet restore Guildhall.slnx --locked-mode` passes. Dependency audit reports no known vulnerable host packages; npm install audit reported no vulnerabilities. PowerShell scripts parse successfully.
 
-`./scripts/Smoke-Host.ps1` passed twice across host restarts with the real runtime SQL login and local Ollama. It verifies authenticated health, SQL readiness, local model discovery, rejection of unauthenticated/unrelated-origin requests, preserved installation identity, and listener cleanup.
+`./scripts/misc/Smoke-Host.ps1` passed twice across host restarts with the real runtime SQL login and local Ollama. It verifies authenticated health, SQL readiness, local model discovery, rejection of unauthenticated/unrelated-origin requests, preserved installation identity, and listener cleanup.
 
 ## Native and lifecycle checks
 
 - Launched the native Tauri development window. It initially showed host connected, SQL not configured, and Ollama unavailable, with readable recovery instructions.
-- After approved setup, built embedded frontend assets with `npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle` and launched `./scripts/Start-Dev.ps1 -BuiltDesktop`.
+- After approved setup, built embedded frontend assets with `npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle` and launched `./scripts/startup/Start-Dev.ps1 -BuiltDesktop`.
 - Inspected the native window showing **Connected**, SQL **Ready**, and local model **smollm2:135m**. No Vite listener was required in this mode.
 - Closing the native window normally stops the owned host. Bounded development-launcher checks leave both API/Vite ports free. The initial orphaned Vite issue was fixed by making the launcher own Vite directly rather than relying on Tauri's shell command.
 - An occupied-port check rejects startup without stopping the existing listener. Child-environment checks exclude arbitrary secrets and migration credentials; Vite receives no session token.

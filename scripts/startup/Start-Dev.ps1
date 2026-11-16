@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param([switch]$HostOnly, [switch]$BuiltDesktop, [switch]$UseGpu, [ValidateRange(0,900)][int]$KeepModelWarmSeconds = 0, [ValidateRange(1,120)][int]$RunForSeconds = 0)
-. "$PSScriptRoot/Common.ps1"
+. "$PSScriptRoot/../misc/Common.ps1"
 Assert-LocalPortFree 43120
 if ($HostOnly -and $BuiltDesktop) { throw 'Choose HostOnly or BuiltDesktop, not both.' }
 if (-not $HostOnly -and -not $BuiltDesktop) { Assert-LocalPortFree 1420 }
@@ -84,7 +84,7 @@ try {
     }
     $writeManifest = { [IO.File]::WriteAllText($sessionManifestPath, ($manifest | ConvertTo-Json -Depth 3), [Text.UTF8Encoding]::new($false)) }
     & $writeManifest
-    Write-Output "Development session: $sessionId (status: pwsh -NoProfile -File .\scripts\Get-DevStatus.ps1)"
+    Write-Output "Development session: $sessionId (status: pwsh -NoProfile -File .\scripts\startup\Get-DevStatus.ps1)"
     $stopAt = if ($RunForSeconds -gt 0) { [datetime]::UtcNow.AddSeconds($RunForSeconds) } else { [datetime]::MaxValue }
     $nextStatusCheck = [datetime]::MinValue
     while ([datetime]::UtcNow -lt $stopAt) {

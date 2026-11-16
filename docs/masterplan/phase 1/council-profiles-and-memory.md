@@ -93,7 +93,7 @@ Verification commands after implementation:
 npm --prefix apps/desktop run build
 npm --prefix apps/desktop run test -- --run
 dotnet test tests/Guildhall.AgentHost.Tests --filter Category=SqlIntegration
-pwsh -NoProfile -File G:\repos\guildhall\scripts\Start-Dev.ps1
+pwsh -NoProfile -File G:\repos\guildhall\scripts\startup\Start-Dev.ps1
 ```
 
 The agent runs automated/isolated SQL checks with the approved test connection. Owner QC is the native window: create two members and sessions, change one portrait/rule, save shared and private notes, relaunch, switch models, inspect context, disable a note, and confirm the other bot remains independent.
