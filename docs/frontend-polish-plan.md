@@ -22,7 +22,7 @@ Owner resolved member deletion (7): permanently delete the member and ALL linked
 - Suggestion buttons change the draft and focus composer, never submit automatically or overwrite an existing draft without care. No model call generates suggestions.
 - Elapsed timing uses server records, labels its measurement honestly, survives reopen and omits unavailable data. Queue waiting is not presented as measured inference.
 - Only empty active replies animate waiting wording; reduced motion disables transitions. No invented progress/work claims or unnecessary live announcements.
-- Queued user/assistant transcript placeholders collapse to composer-adjacent rows with snippets and named promote/remove controls. Promote reuses the same run and attachments; stale/active errors remain actionable.
+- Queued user/assistant transcript placeholders collapse to a vertical composer-adjacent blade with per-row Send now, Edit, and Delete controls. Promote reuses the same run; editing loads saved text/attachments into the composer and replaces the old queued run on resubmission.
 - No horizontal scrolling at widths 420/620/900/1280/1920 and scales 80/100/125/150 percent; long code blocks and tables wrap within their available width. Composer controls remain usable with side panels, attachments, draft text and queued work.
 - Existing archive, restore, stop, message send, export and profile editing remain functional.
 

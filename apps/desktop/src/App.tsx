@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { bootstrap, parseDiscovery, parseReadiness, request } from './api';
-import type { AgentProfile, Bootstrap, Conversation, ConversationDetails, Discovery, Readiness } from './api';
+import { bootstrap, parseDiscovery, parseReadiness, request, requestBlob } from './api';
+import type { AgentProfile, Bootstrap, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
 import { MessageAttachment } from './MessageAttachment';
 import { StreamingMarkdown } from './StreamingMarkdown';
 import { GuildhallBehaviorSettings } from './GuildhallBehaviorSettings';
@@ -75,6 +75,7 @@ export default function App() {
   const transcript = scrolling.transcript;
   const [draft, setDraft] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [editingQueuedRunId, setEditingQueuedRunId] = useState<string | null>(null);
   const filePicker = useRef<HTMLInputElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => {
@@ -82,7 +83,7 @@ export default function App() {
     composerInput.current.style.height = 'auto';
     composerInput.current.style.height = `${Math.min(160, Math.max(30, composerInput.current.scrollHeight))}px`;
   }, [draft]);
-  const hasDraft = !!draft.trim() || selectedFiles.length > 0;
+  const hasDraft = !!draft.trim() || selectedFiles.length > 0 || editingQueuedRunId !== null;
   const [chatError, setChatError] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [history, setHistory] = useState<Conversation[]>([]);
@@ -452,6 +453,20 @@ export default function App() {
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
+  async function editQueuedMessage(assistantMessage: MessageView, userMessage?: MessageView) {
+    if (!configuration.current || !assistantMessage.runId || !userMessage || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      const files = await Promise.all((userMessage.attachments ?? []).map(async attachment => {
+        const blob = await requestBlob(configuration.current!, `/attachments/${attachment.id}`, new AbortController().signal);
+        return new File([blob], attachment.fileName, { type: attachment.contentType });
+      }));
+      setDraft(userMessage.text); setSelectedFiles(files); setEditingQueuedRunId(assistantMessage.runId); setDeliveryMode('queue');
+      requestAnimationFrame(() => composerInput.current?.focus());
+    } catch { setChatError('Could not load this queued message for editing. The queued message is unchanged.'); }
+    finally { chatOperation.current = false; setChatBusy(false); }
+  }
+
   useEffect(() => {
     const conversationId = conversation?.conversation?.id;
     if (!conversationId || !configuration.current || !hasPendingWork) return;
@@ -556,12 +571,12 @@ export default function App() {
   }
   async function sendMessage() {
     if (!conversation && (!activeProfile || activeProfile.isArchived)) return;
-    if (queuedCount >= 8) { setChatError('Eight messages are already queued. Remove one or wait for a reply.'); return; }
+    if (queuedCount >= 8 && !editingQueuedRunId) { setChatError('Eight messages are already queued. Remove one or wait for a reply.'); return; }
     const modelId = conversation?.conversation.selectedModelId ?? chosenModel;
     if (!configuration.current || database?.status !== 'ready' || (!draft.trim() && selectedFiles.length === 0) || chatOperation.current || !modelId || !models?.models.some(model => model.id === modelId)) return;
     chatOperation.current = true; setChatBusy(true);
     scrolling.pinToBottom();
-    const text = draft; setDraft(''); setChatError('');
+    const text = draft; let replacedRunCancelled = false; setDraft(''); setChatError('');
     try {
       let target = conversation;
       if (!target) {
@@ -575,6 +590,13 @@ export default function App() {
         setHistory(items => [created, ...items.filter(item => item.id !== created.id)]);
       }
       target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      if (editingQueuedRunId) {
+        const original = target.messages.find(message => message.role === 'assistant' && message.runId === editingQueuedRunId);
+        if (original?.status !== 'Queued') { setEditingQueuedRunId(null); throw new Error('queued_message_already_started'); }
+        await request(configuration.current, `/runs/${editingQueuedRunId}/cancel`, new AbortController().signal, { method: 'POST' });
+        replacedRunCancelled = true; setEditingQueuedRunId(null);
+        target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      }
       const clientRequestId = crypto.randomUUID();
       const init: RequestInit = { method: 'POST' };
       if (selectedFiles.length) {
@@ -588,9 +610,16 @@ export default function App() {
       }
       await request(configuration.current, `/conversations/${target.conversation.id}/messages`, new AbortController().signal, init);
       const updated = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
-      setConversation(updated); setSelectedFiles([]);
+      setConversation(updated); setSelectedFiles([]); setEditingQueuedRunId(null);
       setHistory(items => items.map(item => item.id === updated.conversation.id ? updated.conversation : item));
-    } catch { setDraft(text); setChatError('Message could not be sent.'); }
+    } catch (error) {
+      setDraft(text);
+      setChatError(error instanceof Error && error.message === 'queued_message_already_started'
+        ? 'That queued reply has already started. Your edited text is still here; send it as a new message after the reply finishes.'
+        : replacedRunCancelled
+          ? 'The original queued message was removed, but its replacement could not be sent. Your text and attachments are still here; send again to retry.'
+          : 'Message could not be sent. Your text and attachments are still in the composer.');
+    }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
@@ -754,11 +783,12 @@ export default function App() {
         {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}{message.role === 'assistant' && message.status === 'Completed' && formatResponseDuration(message.responseDurationSeconds) && <span className="run-label response-duration" title="Includes time waiting in the queue">{formatResponseDuration(message.responseDurationSeconds)}</span>}<div className="message-surface"><div className="markdown-body">{message.text ? <StreamingMarkdown text={message.text} streaming={message.role === 'assistant' && message.status === 'Running'} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}</span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button><span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
       </div></div>
       <div className="composer-region">{activeProfile?.isArchived && <p className="archived-member-notice">Archived member · Saved sessions are kept. Restore the member to start a new session.</p>}{archiveMemberError && !archiveMemberTarget && <p className="chat-error" role="alert">{archiveMemberError}</p>}{chatError && <p className="chat-error" role="alert">{chatError}</p>}
-      {!!queuedMessages.length && <div className="queue-panel" aria-label="Queued messages">{queuedMessages.map(message => {
+      {!!queuedMessages.length && <section className="queue-panel" aria-label="Queued messages"><h3>{queuedMessages.length} queued</h3>{queuedMessages.map(message => {
         const userMessage = conversation?.messages.find(candidate => candidate.role === 'user' && candidate.turnNumber === message.turnNumber);
-        return <div className="queue-item" key={message.id}><button type="button" aria-label={`Send queued message ${message.turnNumber} now`} title="Send now" disabled={chatBusy} onClick={() => void promoteQueuedMessage(message.runId)}><Icon name="send" size={17} /></button><button type="button" aria-label={`Remove queued message ${message.turnNumber}`} title="Remove from queue" disabled={chatBusy} onClick={() => void removeQueuedMessage(message.runId)}><Icon name="trash" size={17} /></button><span className="queue-snippet">{userMessage?.text || (userMessage?.attachments?.length ? `${userMessage.attachments.length} attachment${userMessage.attachments.length === 1 ? '' : 's'}` : 'Attachment message')}</span>{!!userMessage?.attachments?.length && <details className="queue-attachments"><summary>{userMessage.attachments.length} files</summary>{userMessage.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</details>}</div>;
-      })}</div>}
-      <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a local model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || !models || models.status !== 'available' || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
+        return <div className="queue-item" key={message.id}><span className="queue-snippet">{userMessage?.text || (userMessage?.attachments?.length ? `${userMessage.attachments.length} attachment${userMessage.attachments.length === 1 ? '' : 's'}` : 'Attachment message')}</span>{!!userMessage?.attachments?.length && <span className="queue-file-count">{userMessage.attachments.length} {userMessage.attachments.length === 1 ? 'file' : 'files'}</span>}<div className="queue-actions"><button type="button" aria-label={`Send queued message ${message.turnNumber} now`} title="Send now" disabled={chatBusy} onClick={() => void promoteQueuedMessage(message.runId)}><Icon name="send" size={17} /></button><button type="button" aria-label={`Edit queued message ${message.turnNumber}`} title={hasDraft ? 'Clear your draft before editing a queued message' : 'Edit'} disabled={chatBusy || hasDraft} onClick={() => void editQueuedMessage(message, userMessage)}><Icon name="edit" size={17} /></button><button type="button" aria-label={`Remove queued message ${message.turnNumber}`} title="Delete" disabled={chatBusy} onClick={() => void removeQueuedMessage(message.runId)}><Icon name="trash" size={17} /></button></div></div>;
+      })}</section>}
+      {editingQueuedRunId && <div className="queue-editing" role="status">Editing queued message <button type="button" onClick={() => { setEditingQueuedRunId(null); setDraft(''); setSelectedFiles([]); }}>Cancel edit</button></div>}
+      <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}{editingQueuedRunId && <span className="queue-editing-label">Editing queued message · Send to replace it</span>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a local model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || !models || models.status !== 'available' || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
       <input ref={filePicker} className="sr-only" type="file" multiple aria-label="Choose attachments" onChange={event => { addAttachments(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
       <div className="composer-toolbar"><button className="attach-button" aria-label="Add attachments" title="Add files (up to 20 MB each)" onClick={() => filePicker.current?.click()} disabled={chatBusy || database?.status !== 'ready'}><Icon name="attach" size={22} /></button><label className="model-control"><span className="sr-only">Model for {conversation ? 'this conversation' : 'a new conversation'}</span>
         <select value={chosenModel} onChange={event => void selectModel(event.target.value)} disabled={chatBusy || models?.status !== 'available'}>
@@ -766,7 +796,7 @@ export default function App() {
           {chosenModel && !models?.models.some(model => model.id === chosenModel) && <option value={chosenModel} disabled>{chosenModel} (unavailable)</option>}
           {models?.models.map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
         </select>
-      </label><span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title="Send (Enter)" onClick={() => void sendMessage()} disabled={!canSend || !hasDraft || chatBusy || queuedCount >= 8}><Icon name="send" size={22} /></button>}</div></div>
+      </label><span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
       <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line · Clear your draft to change chats' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
     </section></div>
     {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} onChange={setIdentity} onClose={() => setShowMember(false)} storageError={profileError || storageError} saving={profileSaving} onRetrySave={() => setProfileRetry(value => value + 1)} retryAvailable={profileDirty && !!profileError} />}

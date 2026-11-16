@@ -137,3 +137,18 @@ body{overscroll-behavior:none}
 
 /* Reserve two composer control rows on narrow windows so queue/stop controls do not shift the textarea. */
 @media(max-width:899px){.composer-region footer{min-height:3.2em}.composer-toolbar{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-rows:38px 38px;gap:5px;align-items:center;justify-content:stretch}.composer-toolbar .attach-button{grid-column:1;grid-row:1}.composer-toolbar .model-control{grid-column:2;grid-row:1;max-width:100%;margin:0;padding-left:0;border:0}.composer-toolbar .model-control select{width:100%;max-width:100%}.composer-toolbar .composer-spacer{display:none}.composer-toolbar .delivery-mode{grid-column:2;grid-row:2;justify-self:start;max-width:100%}.composer-toolbar .stop-button{grid-column:3;grid-row:2}.composer-toolbar .send-button:not(.stop-button){grid-column:4;grid-row:2}}
+
+/* Cursor-style stacked queue blade above the composer. */
+.queue-panel{display:grid;gap:6px;max-height:min(30vh,240px);overflow-y:auto;overflow-x:hidden;margin:0 clamp(8px,2.5vw,48px) 8px;padding:8px 10px;border:1px solid #383638;border-radius:12px;background:#1d1d1f}
+.queue-panel h3{font-size:11px;font-weight:500;color:#aaa;font-variant-numeric:tabular-nums}
+.queue-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 10px;min-width:0;padding:6px 9px;border:1px solid transparent;border-radius:8px;background:#29292b}
+.queue-item .queue-snippet{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e0e0e0;font-size:12px}
+.queue-file-count{font-size:10px;color:#aaa}
+.queue-actions{grid-column:2;grid-row:1/3;display:flex;align-items:center;gap:2px}
+.queue-actions button{display:grid;place-items:center;width:36px;height:36px;min-width:36px;padding:7px;border:0;background:transparent;color:#b9b9bb}
+.queue-actions button:hover:not(:disabled){color:#f2f2f2;background:#3a3a3d}
+.queue-editing{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 clamp(8px,2.5vw,48px) 6px;color:#e2c393;font-size:11px}
+.queue-editing button{padding:3px 7px;font-size:10px}
+@media(max-width:480px){.queue-panel{margin-left:8px;margin-right:8px;padding:7px}.queue-item{padding:5px 6px}.queue-actions button{width:36px;height:36px;min-width:36px}}
+.queue-editing-label{grid-column:1/-1;color:#d3b37f;font-size:10px}
+.queue-item .queue-snippet{grid-column:1;grid-row:1;order:0;flex-basis:auto}.queue-item .queue-file-count{grid-column:1;grid-row:2;order:1}.queue-item .queue-actions{grid-column:2;grid-row:1/3}

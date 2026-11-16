@@ -137,6 +137,7 @@ describe('connection status', () => {
         return { runId: `queued-run-${sends.length}` };
       }
       if (path.endsWith('/promote')) { promotions.push(path); return { runId: 'queued-run-1', conversationRevision: chat.revision + 1 }; }
+      if (path === '/runs/queued-run-1/cancel' && init?.method === 'POST') { const queued = messages.find(message => message.runId === 'queued-run-1'); if (queued) queued.status = 'Cancelled'; return null; }
       return { conversation: chat, messages: [...messages] };
     });
     render(<App />);
@@ -152,7 +153,13 @@ describe('connection status', () => {
     const queuedPanel = screen.getByLabelText('Queued messages');
     expect(within(queuedPanel).getByText('A queued follow-up')).toBeInTheDocument();
     expect(screen.queryByText('Queued — waiting for a turn.')).toBeNull();
-    fireEvent.click(within(queuedPanel).getByRole('button', { name: 'Send queued message 2 now' }));
+    fireEvent.click(within(queuedPanel).getByRole('button', { name: 'Edit queued message 2' }));
+    await waitFor(() => expect(composer).toHaveValue('A queued follow-up'));
+    fireEvent.change(composer, { target: { value: 'Edited queued follow-up' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Replace queued message' }));
+    await waitFor(() => expect(sends).toEqual(['queue', 'queue']));
+    expect(await within(screen.getByLabelText('Queued messages')).findByText('Edited queued follow-up')).toBeInTheDocument();
+    fireEvent.click(within(screen.getByLabelText('Queued messages')).getByRole('button', { name: 'Send queued message 3 now' }));
     await waitFor(() => expect(promotions).toHaveLength(1));
     await waitFor(() => expect(model).toBeEnabled());
     fireEvent.change(model, { target: { value: 'qwen3-vl:2b' } });
@@ -160,7 +167,7 @@ describe('connection status', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Follow-up delivery' }), { target: { value: 'send_now' } });
     fireEvent.change(composer, { target: { value: 'Do this now instead' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
-    await waitFor(() => expect(sends).toEqual(['queue', 'send_now']));
+    await waitFor(() => expect(sends).toEqual(['queue', 'queue', 'send_now']));
   });
 
   it('keeps portraits on member headings and uses a neutral session icon while keeping the model current', async () => {
