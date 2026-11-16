@@ -4,6 +4,8 @@ These additions preserve the existing master-plan phases. They clarify the inten
 
 ## Phase 1 quality and conversation work
 
+November 16: the owner requested more capable task-focused member behavior with understated Guildhall personalities, grounded research/proposals, usable local-model speed and a member-rules editor that does not dim the council on every keystroke. See [the bounded quality/performance follow-up](agent-quality-and-performance.md). Prompt behavior and current editor/performance fixes belong to Phase 1; explicit SQL memory follows B05/B06, research tools and delegation keep their existing later-phase boundaries.
+
 Owner-approved Phase 1 additions now include visible saved streaming and Stop behavior; a bounded per-session queue with Send Now promotion/removal; model selection during generation for future accepted turns; local chat attachments; safe Markdown/GFM formatting; inline image previews; copy actions; automatic first-message titles and manual rename; useful conversation filtering; saved-chat recovery; keyboard UI scaling; pinned-to-bottom transcript behavior with upward-scroll opt-out; and collapsible workspace panels. Layout Preview is a navigable placeholder surface for Git changes, Terminal, Plan, Context Usage, Browser/QC, Side Chat, and Scheduled Tasks. Placeholder controls must say when a feature is unavailable and must not imply that commands, external services, or automations are connected. Queue state is persisted in SQL, but execution is tied to the running host; restart marks unfinished work Interrupted instead of replaying it.
 
 ## Council profiles and memory

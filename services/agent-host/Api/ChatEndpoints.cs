@@ -204,7 +204,7 @@ public static class ChatEndpoints
                     ClientRequestId = clientRequestId, RequestFingerprint = fingerprint, Status = ChatRunStatus.Queued,
                     StartedUtc = now, UpdatedUtc = now, InstructionsSnapshot = conversation.AgentDefinition.Instructions,
                     ModelId = conversation.SelectedModelId, ProviderId = "ollama",
-                    SettingsSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { deliveryMode, interruptedRunId = interrupted }) };
+                    SettingsSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { deliveryMode, interruptedRunId = interrupted, guildhallBehaviorVersion = GuildhallBehavior.Version, guildhallBehavior = GuildhallBehavior.Instructions }) };
                 var userMessage = new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.User, Text = text ?? string.Empty };
                 foreach (var item in uploaded) userMessage.Attachments.Add(new ChatAttachment { Id = Guid.NewGuid(), FileName = item.Name, ContentType = item.Type, Length = item.Content.LongLength, Content = item.Content });
                 run.Messages.Add(userMessage);

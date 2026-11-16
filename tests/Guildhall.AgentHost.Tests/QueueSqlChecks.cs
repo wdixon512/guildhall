@@ -61,6 +61,13 @@ internal static class QueueSqlChecks
         Assert.Contains("hold-first", calls[1].Context);
         Assert.DoesNotContain("queued-second", calls[1].Context);
         await using var verify = new GuildhallDbContext(options);
+        var captured = await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId);
+        using (var snapshot = JsonDocument.Parse(captured.SettingsSnapshotJson!))
+        {
+            Assert.Equal(Chat.GuildhallBehavior.Version, snapshot.RootElement.GetProperty("guildhallBehaviorVersion").GetString());
+            Assert.Equal(Chat.GuildhallBehavior.Instructions, snapshot.RootElement.GetProperty("guildhallBehavior").GetString());
+        }
+        Assert.Equal("A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == first.RunId)).Status);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == removed.RunId)).Status);
         Assert.Equal(ChatRunStatus.Completed, (await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId)).Status);
@@ -86,14 +93,18 @@ internal static class QueueSqlChecks
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Assert.False(json.RootElement.GetProperty("think").GetBoolean());
+            Assert.Equal(0, json.RootElement.GetProperty("keep_alive").GetInt32());
             var messages = json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+            Assert.Equal("system", messages[0].GetProperty("role").GetString());
+            Assert.StartsWith(Chat.GuildhallBehavior.Instructions, messages[0].GetProperty("content").GetString());
             var text = messages.Last().GetProperty("content").GetString()!;
             Calls.Enqueue((text, json.RootElement.GetProperty("model").GetString()!, string.Join("\n", messages.Select(x => x.GetProperty("content").GetString()))));
             var count = Interlocked.Increment(ref concurrent); Peak = Math.Max(Peak, count);
             try
             {
                 if (text == "hold-first") { Started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); }
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"message\":{\"content\":\"A completed reply.\"},\"done\":true}\n", Encoding.UTF8, "application/x-ndjson") };
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"message\":{\"thinking\":\"Private fixture reasoning\"},\"done\":false}\n{\"message\":{\"content\":\"A completed reply.\"},\"done\":true}\n", Encoding.UTF8, "application/x-ndjson") };
             }
             finally { Interlocked.Decrement(ref concurrent); }
         }
