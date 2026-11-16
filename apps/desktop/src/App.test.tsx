@@ -19,9 +19,118 @@ function responses(database: unknown, models: unknown) {
 beforeEach(() => {
   vi.mocked(bootstrap).mockReset().mockResolvedValue({ hostUrl: 'http://127.0.0.1:43120', token: 'test-token' });
   vi.mocked(request).mockReset();
+  for (const key of ['guildhall.pane.council', 'guildhall.pane.member', 'guildhall.pane.tools']) localStorage.removeItem(key);
 });
 
 describe('connection status', () => {
+  it('exposes keyboard resizers for the council, Session Tools, and Guild Member panes', async () => {
+    const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 1, isArchived: false };
+    vi.mocked(request).mockImplementation(async (_, path) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'qwen3:1.7b', displayName: 'qwen3:1.7b' }] };
+      if (path === '/agents') return [profile];
+      if (path.startsWith('/conversations?')) return [];
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    render(<App />);
+    const workspace = document.querySelector<HTMLElement>('.workspace')!;
+    const council = await screen.findByRole('separator', { name: 'Resize council and chat panes' });
+    expect(council).toHaveAttribute('aria-controls', 'council-pane chat-pane');
+    const councilWidth = Number.parseFloat(workspace.style.getPropertyValue('--council-width'));
+    fireEvent.keyDown(council, { key: 'ArrowRight' });
+    expect(workspace.style.getPropertyValue('--council-width')).toBe(`${councilWidth + 10}px`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session tools' }));
+    const tools = await screen.findByRole('separator', { name: 'Resize Session Tools pane' });
+    const toolsWidth = Number.parseFloat(workspace.style.getPropertyValue('--tools-width'));
+    fireEvent.keyDown(tools, { key: 'ArrowLeft' });
+    expect(workspace.style.getPropertyValue('--tools-width')).toBe(`${toolsWidth + 10}px`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
+    const member = await screen.findByRole('separator', { name: 'Resize Guild Member pane' });
+    const memberWidth = Number.parseFloat(workspace.style.getPropertyValue('--member-width'));
+    fireEvent.keyDown(member, { key: 'ArrowLeft' });
+    expect(workspace.style.getPropertyValue('--member-width')).toBe(`${memberWidth + 10}px`);
+
+    await waitFor(() => {
+      expect(localStorage.getItem('guildhall.pane.council')).toBe(`${councilWidth + 10}`);
+      expect(localStorage.getItem('guildhall.pane.tools')).toBe(`${toolsWidth + 10}`);
+      expect(localStorage.getItem('guildhall.pane.member')).toBe(`${memberWidth + 10}`);
+    });
+  });
+
+  it('clamps drag resizing and keeps the council splitter reachable on a narrow window', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 420 });
+    const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 1, isArchived: false };
+    vi.mocked(request).mockImplementation(async (_, path) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'qwen3:1.7b', displayName: 'qwen3:1.7b' }] };
+      if (path === '/agents') return [profile];
+      if (path.startsWith('/conversations?')) return [];
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    const view = render(<App />);
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Expand chats sidebar' }));
+      const council = await screen.findByRole('separator', { name: 'Resize council and chat panes' });
+      expect(council).toHaveAttribute('aria-valuemax', '290');
+      fireEvent.pointerDown(council, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 100 });
+      fireEvent.pointerMove(council, { pointerId: 1, clientX: 500 });
+      expect(document.querySelector<HTMLElement>('.workspace')?.style.getPropertyValue('--council-width')).toBe('290px');
+      fireEvent.pointerUp(council, { pointerId: 1 });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Guild member appearance' }));
+      const member = await screen.findByRole('separator', { name: 'Resize Guild Member pane' });
+      expect(member).toHaveAttribute('aria-valuemax', '338');
+      fireEvent.pointerDown(member, { pointerId: 2, pointerType: 'mouse', button: 0, clientX: 300 });
+      fireEvent.pointerMove(member, { pointerId: 2, clientX: 0 });
+      expect(document.querySelector<HTMLElement>('.workspace')?.style.getPropertyValue('--member-width')).toBe('338px');
+      fireEvent.pointerUp(member, { pointerId: 2 });
+    } finally {
+      view.unmount();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    }
+  });
+
+  it('collapses an expanded council overlay when the window crosses into the narrow layout', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 1, isArchived: false };
+    const chat = { id: 'fixture-chat', title: 'Pane resize fixture', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id };
+    vi.mocked(request).mockImplementation(async (_, path) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'one', displayName: 'one' }] };
+      if (path === '/agents') return [profile];
+      if (path.startsWith('/conversations?')) return [chat];
+      if (path === '/conversations/fixture-chat') return { conversation: chat, agent: profile, messages: [] };
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    const view = render(<App />);
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Open Pane resize fixture' }));
+      await screen.findByRole('textbox', { name: 'Message' });
+      fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
+      expect(document.querySelector('.workspace')).not.toHaveClass('sidebar-collapsed');
+
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 620 });
+      fireEvent(window, new Event('resize'));
+      await waitFor(() => expect(document.querySelector('.workspace')).toHaveClass('sidebar-collapsed'));
+      fireEvent.click(screen.getByRole('button', { name: 'Session tools' }));
+      expect(await screen.findByRole('separator', { name: 'Resize Session Tools pane' })).toBeInTheDocument();
+      expect(document.querySelector('.workspace')).toHaveClass('sidebar-collapsed');
+    } finally {
+      view.unmount();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    }
+  });
+
   it('requires explicit confirmation before deleting a member and all of its sessions', async () => {
     const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 3, isArchived: false };
     const deleted: string[] = [];
