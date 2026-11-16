@@ -1,4 +1,4 @@
-export type IconName = 'chat' | 'council' | 'folder' | 'spark' | 'settings' | 'search' | 'plus' | 'close' | 'panel' | 'attach' | 'send' | 'chevron' | 'archive' | 'edit' | 'trash' | 'gate' | 'connections' | 'clock' | 'shield';
+export type IconName = 'chat' | 'council' | 'folder' | 'spark' | 'settings' | 'search' | 'plus' | 'close' | 'panel' | 'attach' | 'send' | 'chevron' | 'archive' | 'edit' | 'trash' | 'gate' | 'connections' | 'clock' | 'shield' | 'copy' | 'check';
 const paths: Record<IconName, string> = {
   connections: 'M8 3v5M16 3v5M5 8h14v3a7 7 0 0 1-14 0V8ZM12 18v4',
   chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H8l-5 2 1.7-5A8.5 8.5 0 1 1 21 11.5Z',
@@ -13,6 +13,8 @@ const paths: Record<IconName, string> = {
   gate: 'M3 21V10L12 2l9 8v11h-5V11l-4-4-4 4v10H3ZM1 22h22',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 6v6l4 2',
   shield: 'M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11ZM9 12l2 2 4-4',
+  copy: 'M8 8h12v13H8zM16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3',
+  check: 'm5 12 4 4L19 6',
 };
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;

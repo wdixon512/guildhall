@@ -72,11 +72,11 @@ Current: a singleton assistant has backend read/update endpoints, but no instruc
 
 Recommendation: finish P1 settings with future-turn scope and revision conflicts; implement native user-initiated JSON export and verify its saved file. Treat previews as design scaffolding, never as completed functionality. Priority: high, already P1.
 
-### G07 — Resource policy is invisible
+### G07 — Resource policy and VRAM residency are invisible
 
-Current: CPU mode, four threads, 4096 context and unload-after-reply are request defaults; GPU is a launcher option. There is no resource indicator or in-app profile. Changing models can change resource consumption dramatically even when the UI looks identical.
+Current: CPU mode, four threads, 4096 context and unload-after-reply are request defaults; GPU is a launcher option. There is no resource indicator, live VRAM residency tracker, or in-app profile. Changing models can change resource consumption dramatically even when the UI looks identical.
 
-Recommendation: show CPU/GPU preference, actual execution data when available, context setting and load/unload state. Provide a gaming-friendly profile and unload action; disclose that CPU work can still compete with a game. Do not claim a requested policy is observed GPU residency. Avoid introducing a continuous telemetry service just to draw a chart. Priority: high for visible policy, later measured telemetry.
+Recommendation: show CPU/GPU preference, **VRAM Residency Tracking** (monitoring which models are currently loaded in VRAM via Ollama `/api/ps` and host `keep_alive` timers to prevent cold-swap latency stalls), context setting, and load/unload state. Document **CPU vs. GPU trade-offs** (where a modern CPU such as the AMD Ryzen 7 9800X3D with its large L3 cache paired with fast DDR5 memory handles short conversational turns or smaller models smoothly, while dedicated GPUs remain essential for sustained loads, long context windows, and heavier quantization tiers due to the **Memory Bandwidth Wall**). Provide a gaming-friendly profile and unload action; disclose that CPU work can still compete with a game. Do not claim a requested policy is observed GPU residency. Avoid introducing a continuous telemetry service just to draw a chart. Priority: high for visible policy and VRAM residency, later measured telemetry.
 
 ## Agent-workspace capabilities beyond current chat
 
@@ -86,25 +86,25 @@ Missing: registered repositories/folders, file picker/mentions, selected snippet
 
 Plan coverage: workspace registration in P4, read-only tools in P3, documents later. Gap: specify workspace picker, trust boundaries and included-source chips. File/search tools can precede an editor; do not clone a complete IDE to enable grounded questions.
 
-### G09 — Agent loop and permission modes
+### G09 — Agent loop, hardcoded backend guardrails, and permission modes
 
 Missing: tool selection/execution loop, inspectable calls/results, approvals and read-only/plan/edit execution modes. Existing loopback authentication protects the API; it is not a tool sandbox. A card named Agent does not create an acting agent.
 
-Claude documents allow/ask/deny rules and permission modes; Cursor separates run modes from sandbox restrictions. Guildhall should distinguish intent (Ask/Plan/Act), permission policy and enforcement, with a concrete action preview and scoped remembered approvals. Read-only must be enforced below the model. [Claude permissions](https://code.claude.com/docs/en/permissions), [Cursor run modes](https://cursor.com/docs/agent/security/run-modes).
+Claude documents allow/ask/deny rules and permission modes; Cursor separates run modes from sandbox restrictions. Guildhall must never rely solely on prompt instructions for security. Enforce **Hardcoded Backend Guardrails** in the ASP.NET Core host (`Guildhall.AgentHost`): strict read-only file access defaults, prevention of credential or sensitive data exfiltration, mandatory human-in-the-loop approval gates for any destructive or mutating system operations, and strict **Process Isolation** between the Tauri UI frontend and the ASP.NET Core agent host backend so prompt injections cannot escalate to local OS compromise. [Claude permissions](https://code.claude.com/docs/en/permissions), [Cursor run modes](https://cursor.com/docs/agent/security/run-modes).
 
-Plan coverage: P3 read-only and P4 controlled writes. Add explicit policy-resolution, denied-action and permission-revocation acceptance cases.
+Plan coverage: P3 read-only and P4 controlled writes. Add explicit policy-resolution, denied-action, exfiltration-blocking, and permission-revocation acceptance cases.
 
-### G10 — MCP management is an operational workflow
+### G10 — MCP management and 5-tier health resilience
 
 Missing: install/configuration, discovery, authentication, server status/logs, per-tool scope, reconnect and process cleanup. Cursor describes server/tool configuration and expandable call arguments/results. Claude documents status, scope and connection-failure handling. These show why an MCP catalog alone is insufficient. [Cursor MCP](https://cursor.com/docs/mcp), [Claude MCP](https://code.claude.com/docs/en/mcp).
 
-Plan coverage: P3 local registry/lifecycle/tools, P5 private remote tools. Add disabled/starting/connected/degraded/failed states and distinctions between configure, connect and authorize. MCP server permission and each action's authority remain distinct; tool catalog overhead also belongs in context accounting.
+Plan coverage: P3 local registry/lifecycle/tools, P5 private remote tools. Because local background services (such as Ollama daemons or MCP servers) can crash, hit OOM limits, or fail to restart after updates, implement **Multi-Layer Health Checks**, bounded auto-retry logic, and graceful degradation across all **five architectural tiers**: (1) Tauri UI process, (2) ASP.NET Core Agent Host, (3) SQL Server database, (4) Ollama inference service, and (5) Active MCP tool servers. Add disabled/starting/connected/degraded/failed states and distinctions between configure, connect and authorize. MCP server permission and each action's authority remain distinct; tool catalog overhead also belongs in context accounting.
 
-### G11 — Changes, review and checkpoints
+### G11 — Changes, review, checkpoints, and tool execution rollbacks
 
-Missing: patch preview, dirty-file ownership, changed-file list, line comments, staged decisions, rollback and checkpoints. Proposed actions vs already-applied edits must be clearly distinguished. Git/file rollback cannot undo an external email, SQL write or network side effect.
+Missing: patch preview, dirty-file ownership, changed-file list, line comments, staged decisions, transactional/compensating tool rollbacks and checkpoints. Proposed actions vs already-applied edits must be clearly distinguished. Git/file rollback cannot undo an external email, SQL write or network side effect.
 
-Plan coverage: P4 worktree/sandbox, edit tools and diff approvals. Add a review loop that takes a finding back into the agent with the exact file/lines and verifies the revised result. Use an existing editor for full editing before considering an embedded IDE. Codex's line feedback and Cursor's file-only checkpoint semantics are useful precedents; see the product sections above.
+Plan coverage: P4 worktree/sandbox, edit tools and diff approvals. Implement **Tool Execution Rollbacks**—transactional or compensating rollback mechanisms for failed or cancelled tool actions (using Git worktree/file checkpoints for local edits and explicit compensating cleanup for multi-step local operations, while clearly distinguishing non-reversible external side effects). Add a review loop that takes a finding back into the agent with the exact file/lines and verifies the revised result. Use an existing editor for full editing before considering an embedded IDE. Codex's line feedback and Cursor's file-only checkpoint semantics are useful precedents; see the product sections above.
 
 ### G12 — Verification the agent can perform itself
 
@@ -120,11 +120,11 @@ Claude's terminal documents queued input and timing for when it is incorporated.
 
 Plan coverage: Stop in P1; task queue/lifetime in P6; delegation in P7. Define these as separate behaviors rather than treating every text input as cancellation or a new parallel job.
 
-### G14 — Durable rules, skills and memory
+### G14 — Durable rules, preamble memoization, skills and memory
 
 Missing: project/user instruction scopes, skill activation, persistent preferences, source-of-instruction inspection and memory lifecycle. SQL history alone is neither cross-chat memory nor a rules engine. Skills/rules used by Codex during development are not automatically installed into Guildhall.
 
-Plan coverage: agent instructions and later tools/memory, but discovery/loading/precedence UX is underspecified. Propose a scoped project-guidance increment around P3/P4: inspect which instructions apply and why, allow edits and version them, keep imported content lower-trust than user authority. Semantic memory remains P8 unless evidence warrants moving it earlier. Claude's documented context lifecycle motivates preserving durable rules independently of summaries.
+Plan coverage: separate **Tunable Parameters** (persona/role definitions, primary task objectives, operational mode toggles like reasoning effort) from **Global Guidelines** (system-wide boundaries requiring strict reliance on tool outputs, workspace scope adherence, and zero fabricated states/metrics), configured as **Static System Preambles** per API call. Use version-controlled **Markdown files on disk** as the canonical source of truth for agent preambles/configurations, memoized at runtime in a `.NET ConcurrentDictionary` with a **50–100 MB hard cap** and `FileSystemWatcher` hot-reloading (updating only subsequent prompts without wiping active SQL conversations). Keep SQL Server as the single source of truth for active conversation histories (no full-transcript RAM cache in MVP). Semantic memory remains P8 unless evidence warrants moving it earlier. Claude's documented context lifecycle motivates preserving durable rules independently of summaries.
 
 ### G15 — Provider capability and external-agent boundaries
 
@@ -132,29 +132,30 @@ Missing: real provider abstraction, capability metadata, credential settings, lo
 
 Plan coverage: P2 adapters/usage, cloud-agent integrations as explicit boundaries. Prioritize one normalized provider contract and capability-driven UI. Do not promise arbitrary vendor account reuse or make a third-party SDK the owner of Guildhall data. Keep external runtime histories distinguishable from Guildhall-owned conversations.
 
-### G16 — Usage, observability and audit
+### G16 — Usage, cross-turn budgets, observability and audit
 
-Missing: first-output latency, output rate, actual token usage, error taxonomy, per-run model/settings display, resource measurement and action audit trail. Today logs are minimal and UI errors generic; the schema has status and provenance fields but little user access.
+Missing: first-output latency, output rate, actual token usage, cross-turn budget tracking, error taxonomy, per-run model/settings display, resource measurement and action audit trail. Today logs are minimal and UI errors generic; the schema has status and provenance fields but little user access.
 
-Plan coverage: P2 usage, P3 trace, P7 graph. Distinguish context occupancy, tokens billed, cached tokens, provider quota and measured local resource use. Unknown values should remain unknown. Local inference should not display a fabricated API bill. Cost tracking and context efficiency are separate concerns. [Claude usage and costs](https://code.claude.com/docs/en/costs).
+Plan coverage: P1/P2 usage & **Cross-Turn Budgets** (tracking cumulative token usage and reasoning effort limits across multi-turn sessions), P3 trace, P7 graph. Distinguish context occupancy, cumulative session token/reasoning budgets, tokens billed, cached tokens, provider quota and measured local resource use. Unknown values should remain unknown. Local inference should not display a fabricated API bill. Cost tracking and context efficiency are separate concerns. [Claude usage and costs](https://code.claude.com/docs/en/costs).
 
-### G17 — Background, remote and multi-agent work
+### G17 — Background, remote, multi-agent work, and delegation dependency graphs
 
-Missing: separately running host, durable queue, reconnectable remote sessions, task ownership, child-run budgets and cancellation trees. Independent histories, simultaneous HTTP tasks, multiple app windows and coordinated agents are four different features.
+Missing: separately running host, durable queue, reconnectable remote sessions, task ownership, child-run budgets, **Delegation Dependency Graphs**, and cancellation trees. Independent histories, simultaneous HTTP tasks, multiple app windows and coordinated agents are four different features.
 
-Plan coverage: P6 independent lifetime/remote work, P7 coordination. Keep P1's single-generation policy while browsing multiple conversations. Later require explicit scheduling/resource bounds and isolate write-capable work, using worktrees where appropriate. Codex worktrees demonstrate isolation, not unlimited model capacity or a scheduler.
+Plan coverage: P6 independent lifetime/remote work, P7 coordination. Maintain durable **Delegation Dependency Graphs** (DAGs) when multiple Council Members or sub-agents delegate tasks to one another, tracking parent-child dependencies, inherited cross-turn budgets, and cascading cancellation. Keep P1's single-generation policy while browsing multiple conversations. Later require explicit scheduling/resource bounds and isolate write-capable work, using worktrees where appropriate. Codex worktrees demonstrate isolation, not unlimited model capacity or a scheduler.
 
 ## Context Inspector: proposed design priority
 
 The owner's preference for Claude's context view is explicit. Treat context as a primary session control beside the model selector, opening an inspector panel. This is a Guildhall proposal inspired by the sources, not a claim of exact feature parity with Claude's UI.
 
-### First increment: visibility and enforced limits
+### First increment: visibility, cross-turn budgets, and enforced limits
 
-- Display configured active window and reserved output budget. Never show a model catalog maximum as if it were the current request allowance.
-- Show next-request input budget by category: instructions, eligible conversation, attachments, tool schemas/results and summary. Initially only the categories actually used appear.
+- Display configured active window, reserved output budget, and cumulative **Cross-Turn Budgets** (token usage and reasoning-effort limits across multi-turn sessions). Never show a model catalog maximum as if it were the current request allowance.
+- Show next-request input budget by category: static system preambles (global guidelines + member tunable parameters), approved memory notes, eligible conversation array, attachments, tool schemas/results and summary. Initially only the categories actually used appear.
+- Surface live **VRAM Residency** (`/api/ps`) and CPU/GPU execution mode alongside the active model selector.
 - Mark counts as estimated before sending unless the adapter can provide authoritative token counts. A character-based estimate is not an exact tokenizer. Provider-reported usage after a run is a separate measurement.
 - List included turns and excluded incomplete turns with a reason. Selecting a past run shows its immutable context/model/settings provenance, not today's settings.
-- Enforce a conservative overflow threshold before writing a new run/contacting the provider. Keep the full saved transcript. Offer a new conversation or copy/export path with an explanation.
+- Enforce a conservative overflow threshold or cross-turn budget cap before writing a new run/contacting the provider. Keep the full saved transcript in SQL Server. Offer a new conversation or copy/export path with an explanation.
 - Model switching recomputes the next request's budget. If the smaller model cannot fit the conversation, explain before Send.
 
 Acceptance: intentionally exceed a small configured fixture budget; the app explains the limit, creates no run and makes no provider call. A conversation with cancelled/failed turns shows those in the transcript but excludes them from the request. Displayed accounting matches the constructed request and labels uncertainty.

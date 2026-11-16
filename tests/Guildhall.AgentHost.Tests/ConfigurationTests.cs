@@ -1,5 +1,7 @@
 using Guildhall.AgentHost.Configuration;
+using Guildhall.AgentHost.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Guildhall.AgentHost.Tests;
 
@@ -20,5 +22,24 @@ public sealed class ConfigurationTests
         Assert.Equal(SqlConnectionEncryptOption.Mandatory, connection.Encrypt);
         Assert.True(connection.TrustServerCertificate);
         Assert.False(connection.IntegratedSecurity);
+    }
+
+    [Fact]
+    public void AllowedOriginsIncludesCustomLoopbackFrontendPort()
+    {
+        var origins = LocalConfiguration.AllowedOrigins("http://127.0.0.1:1425");
+        Assert.Contains("http://127.0.0.1:1420", origins);
+        Assert.Contains("http://127.0.0.1:1425", origins);
+    }
+
+    [Fact]
+    public void ServiceProviderResolvesTimeProviderAndLazyServices()
+    {
+        using var app = new ApiFactory();
+        Assert.Same(TimeProvider.System, app.Services.GetRequiredService<TimeProvider>());
+        var lazyReadiness = app.Services.GetRequiredService<Lazy<IDatabaseReadiness>>();
+        Assert.False(lazyReadiness.IsValueCreated);
+        Assert.NotNull(lazyReadiness.Value);
+        Assert.True(lazyReadiness.IsValueCreated);
     }
 }

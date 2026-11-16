@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-bootstrap"
-description = "Read session configuration for the main desktop window."
-commands.allow = ["bootstrap"]
+description = "Read session configuration and open validated external http/https links for the main desktop window."
+commands.allow = ["bootstrap", "open_external_url"]

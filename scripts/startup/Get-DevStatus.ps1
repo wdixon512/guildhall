@@ -1,38 +1,39 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param([switch]$Json)
+param([switch]$Json, [switch]$CurrentCheckoutOnly)
 . "$PSScriptRoot/../misc/Common.ps1"
 
 $currentFingerprint = Get-SourceFingerprint
-$sessionRoot = Join-Path $LocalDirectory 'dev-sessions'
-$sessions = if (Test-Path -LiteralPath $sessionRoot) { Get-ChildItem -LiteralPath $sessionRoot -Directory } else { @() }
+$entries = Get-RegisteredDevSessions
+if ($CurrentCheckoutOnly) {
+    $entries = @($entries | Where-Object { [IO.Path]::GetFullPath($_.Session.checkout) -eq [IO.Path]::GetFullPath($RepoRoot) })
+}
 $sessionReports = @()
+$portsToInspect = [System.Collections.Generic.List[int]]::new()
+$portsToInspect.Add(43120)
+$portsToInspect.Add(1420)
 
-foreach ($directory in $sessions) {
-    $manifestPath = Join-Path $directory.FullName 'session.json'
-    if (-not (Test-Path -LiteralPath $manifestPath)) { continue }
-    $session = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ([IO.Path]::GetFullPath($session.checkout) -ne [IO.Path]::GetFullPath($RepoRoot)) { continue }
-
-    $processes = foreach ($key in @('launcherPid','hostLauncherPid','frontendPid','desktopPid')) {
-        $processId = $session.$key
-        if ($null -eq $processId) { continue }
-        $process = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
-        [pscustomobject]@{ Role = $key; PID = [int]$processId; State = if ($process) { 'running' } else { 'exited' } }
-    }
-    $binaryPath = Join-Path $RepoRoot 'apps/desktop/src-tauri/target/debug/guildhall-desktop.exe'
-    $binaryFingerprint = if (Test-Path -LiteralPath $binaryPath) { (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash } else { 'missing' }
+foreach ($entry in $entries) {
+    $session = $entry.Session
+    if ($session.hostPort) { $portsToInspect.Add([int]$session.hostPort) }
+    if ($session.frontendPort) { $portsToInspect.Add([int]$session.frontendPort) }
+    $checkoutRoot = [string]$session.checkout
+    $binaryPath = Join-Path $checkoutRoot 'apps/desktop/src-tauri/target/debug/guildhall-desktop.exe'
+    $binaryFingerprint = if (Test-SafePath $binaryPath) { (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash } else { 'missing' }
     $binaryIdentity = if ($session.desktopBinarySha256AtStart) {
         if ($binaryFingerprint -eq $session.desktopBinarySha256AtStart) { 'matches launch' } else { 'on-disk binary differs from launch' }
     } else { 'not an embedded build' }
-    $workingTree = @(& git -C $RepoRoot status --porcelain --untracked-files=normal 2>$null)
+    $workingTree = @(& git -C $checkoutRoot status --porcelain --untracked-files=normal 2>$null)
     $gitState = if ($LASTEXITCODE -eq 0) { if ($workingTree.Count) { "dirty ($($workingTree.Count) entries)" } else { 'clean' } } else { 'git status unavailable' }
     $statusIsFresh = $false
     try { $statusIsFresh = ([datetime]::UtcNow - [datetime]::Parse($session.statusCheckedUtc).ToUniversalTime()).TotalSeconds -lt 15 } catch { }
     $sessionReports += [pscustomobject]@{
         Session = $session.sessionId
+        WindowTitle = if ($session.psobject.Properties['windowTitle']) { $session.windowTitle } else { 'Guildhall' }
+        Branch = if ($session.psobject.Properties['branch']) { $session.branch } else { Split-Path -Leaf $checkoutRoot }
+        Version = if ($session.psobject.Properties['version']) { $session.version } else { 'v0.1.0' }
         Mode = $session.mode
-        Checkout = $session.checkout
+        Checkout = $checkoutRoot
         Ports = if ($session.frontendPort) { "host=$($session.hostPort), frontend=$($session.frontendPort)" } else { "host=$($session.hostPort)" }
         StartedUtc = $session.startedUtc
         Host = if ($statusIsFresh) { $session.hostStatus } else { 'stale status snapshot' }
@@ -40,26 +41,13 @@ foreach ($directory in $sessions) {
         StatusCheckedUtc = $session.statusCheckedUtc
         WorkingTree = $gitState
         SourceFingerprintAtStart = $session.sourceFingerprintAtStart
-        CurrentSourceFingerprint = $currentFingerprint
+        CurrentSourceFingerprint = if ([IO.Path]::GetFullPath($checkoutRoot) -eq [IO.Path]::GetFullPath($RepoRoot)) { $currentFingerprint } else { 'other worktree' }
         DesktopBinary = $binaryIdentity
-        Processes = @($processes)
+        Processes = @($entry.Processes | Select-Object Role, PID, State)
     }
 }
 
-$listenerSummary = foreach ($port in @(43120,1420)) {
-    $listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
-    foreach ($listener in $listeners) {
-        $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
-        $path = if ($process) { try { $process.Path } catch { $null } } else { $null }
-        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
-        $expectedVite = [regex]::Escape((Join-Path $RepoRoot 'apps/desktop/node_modules/vite/bin/vite.js'))
-        $isGuildhall = ($path -and $path.StartsWith(($RepoRoot.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) -or
-            ($processInfo.CommandLine -and $processInfo.CommandLine -match $expectedVite)
-        $ownership = if ($isGuildhall) { 'Guildhall checkout' } else { 'unverified owner; left untouched' }
-        [pscustomobject]@{ Port = $port; PID = $listener.OwningProcess; Process = if ($process) { $process.ProcessName } else { 'exited' }; Ownership = $ownership }
-    }
-}
-$listenerSummary = @($listenerSummary)
+$listenerSummary = @(Get-VerifiedGuildhallPortListeners -Ports ($portsToInspect.ToArray()) | Select-Object Port, PID, Process, Ownership)
 
 if ($Json) {
     [pscustomobject]@{
@@ -78,6 +66,9 @@ if (-not $sessionReports.Count) { Write-Output 'No Guildhall dev session is regi
 foreach ($report in $sessionReports) {
     [pscustomobject]@{
         Session = $report.Session
+        WindowTitle = $report.WindowTitle
+        Branch = $report.Branch
+        Version = $report.Version
         Mode = $report.Mode
         Checkout = $report.Checkout
         Ports = $report.Ports

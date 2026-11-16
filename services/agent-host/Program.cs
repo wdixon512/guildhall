@@ -7,14 +7,22 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateScopes = true;
+    options.ValidateOnBuild = true;
+});
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddTransient(typeof(Lazy<>), typeof(Lazier<>));
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 54 * 1024 * 1024);
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 53 * 1024 * 1024);
 // Avoid framework request/SQL logging accidentally recording sensitive configuration.
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
+var allowedOrigins = LocalConfiguration.AllowedOrigins(builder.Configuration["GUILDHALL_FRONTEND_URL"]);
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
-    .WithOrigins(LocalConfiguration.Origins).WithMethods("GET", "POST", "PATCH", "DELETE").WithHeaders("Authorization", "Content-Type")));
+    .WithOrigins(allowedOrigins).WithMethods("GET", "POST", "PATCH", "PUT", "DELETE").WithHeaders("Authorization", "Content-Type")));
 builder.Services.AddDbContextFactory<GuildhallDbContext>((services, options) =>
     options.UseSqlServer(LocalConfiguration.RuntimeConnection(services.GetRequiredService<IConfiguration>().GetConnectionString("Guildhall")), sql => sql.CommandTimeout(10)));
 builder.Services.AddSingleton<IDatabaseReadiness>(services => new DatabaseReadiness(LocalConfiguration.RuntimeConnection(

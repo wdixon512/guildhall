@@ -1,0 +1,6 @@
+# Guildhall Agent Instructions
+
+Read and follow:
+1. [AGENTS.md](AGENTS.md) — Canonical engineering principles, security boundaries, and documentation routing (`docs/masterplan/`).
+2. [docs/coding-standards.md](docs/coding-standards.md) — Stack coding standards for `.NET 10` (DI over static methods, `TimeProvider`, `IOptionsMonitor<T>`), `EF Core 10` (`ILazyLoader` without proxy packages, `.AsNoTracking()`, projections, automated additive migrations), `React 19` (`React.lazy`), and `Tauri 2`.
+3. [.agents/roster.md](.agents/roster.md) — 5-role development agent roster, reasoning-tier routing, multi-port worktree execution, and `services/agent-host/Preambles/` layout.

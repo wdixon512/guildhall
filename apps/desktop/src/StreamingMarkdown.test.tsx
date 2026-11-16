@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { StreamingMarkdown } from './StreamingMarkdown';
 
@@ -30,4 +30,24 @@ it('renders updates immediately when reduced motion is enabled', () => {
   const view = render(<StreamingMarkdown text="Saved response" streaming />);
   view.rerender(<StreamingMarkdown text="Saved response with new text" streaming />);
   expect(view.container.textContent).toBe('Saved response with new text');
+});
+
+it('opens safe http/https links externally and blocks unsafe schemes', () => {
+  const openSpy = vi.fn();
+  vi.stubGlobal('open', openSpy);
+  render(<StreamingMarkdown text={'Visit [Docs](https://example.com/docs) or [Bad](javascript:alert(1)).'} streaming={false} />);
+  const safeLink = screen.getByRole('link', { name: 'Docs' });
+  fireEvent.click(safeLink);
+  expect(openSpy).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer');
+  expect(screen.queryByRole('link', { name: 'Bad' })).toBeNull();
+  expect(screen.getByText('Bad')).toHaveClass('blocked-link');
+});
+
+it('provides a top-left copy button on fenced code blocks', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  render(<StreamingMarkdown text={'```bash\necho hello\n```'} streaming={false} />);
+  const copyButton = screen.getByRole('button', { name: 'Copy code block' });
+  fireEvent.click(copyButton);
+  expect(writeText).toHaveBeenCalledWith('echo hello\n');
 });

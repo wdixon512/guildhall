@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export interface Bootstrap { hostUrl: string; token: string }
+export interface Bootstrap { hostUrl: string; token: string; windowTitle?: string; instanceTag?: string }
 export interface Readiness { status: 'ready' | 'unavailable'; reason?: string }
 export interface Discovery {
   providerId: 'ollama';

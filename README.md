@@ -4,6 +4,8 @@ A personal, self-hosted AI workspace. Phase 0 connectivity is complete; Phase 1 
 
 - [Master architecture and implementation plan](docs/masterplan/personal_ai_ecosystem_master_plan.md)
 - [Owner-requested roadmap amendments](docs/masterplan/product-roadmap-amendments.md)
+- [Tech stack & coding standards (.NET 10, EF Core 10, Tauri 2, React 19)](docs/coding-standards.md)
+- [Agent roster & worktree orchestration guide](.agents/roster.md)
 - [Architecture review and proposed decisions](docs/masterplan/phase%200/architecture-review.md)
 - [Phase 0 tasks, acceptance criteria, and verification](docs/masterplan/phase%200/phase-0.md)
 - [Engineering principles](AGENTS.md)
@@ -40,12 +42,13 @@ dotnet build Guildhall.slnx --no-restore
 ./scripts/startup/Start-Dev.ps1
 ```
 
-The launcher opens a native window, uses fresh in-memory session authentication, and owns the host, Vite, and desktop process trees. Closing the desktop or pressing Ctrl+C stops those owned processes. The host listens only at `127.0.0.1:43120`; Vite listens only at `127.0.0.1:1420`. Leave those ports free; the launcher never kills a port occupant. Do not run `tauri dev` separately when the launcher is running.
+The launcher opens a native window titled with the current version, Git branch/worktree, and port (`Guildhall v0.1.0 [branch | :43120]`), uses fresh in-memory session authentication, and owns the host, Vite, and desktop process trees. Closing the desktop or pressing Ctrl+C stops those owned processes. By default the host listens at `127.0.0.1:43120` and Vite listens at `127.0.0.1:1420`. To run multiple worktrees side-by-side on automatic free ports, pass `-AutoPort` (or explicit `-HostPort` / `-FrontendPort` and optional `-WindowTag`); to stop and replace an existing Guildhall instance on the target ports, pass `-Replace`. Do not run `tauri dev` separately when the launcher is running.
 
-In another PowerShell 7 window, inspect the active checkout/build and the launcher's last authenticated host/SQL status without exposing its token:
+In another PowerShell 7 window, inspect all active Guildhall sessions across worktrees (including window title, branch, version, ports, and last authenticated host/SQL status) without exposing tokens, or stop active sessions:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\startup\Get-DevStatus.ps1
+pwsh -NoProfile -File .\scripts\startup\Stop-Dev.ps1 -All
 ```
 
 Normal development mode keeps the Tauri window open while Vite applies React edits through HMR and `dotnet watch` rebuilds/restarts the ASP.NET host after C# edits. Use `-BuiltDesktop` only for a fixed embedded build and final native QC.

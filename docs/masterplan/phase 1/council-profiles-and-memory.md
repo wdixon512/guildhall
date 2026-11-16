@@ -22,13 +22,28 @@ Extend the existing AgentDefinitions/Conversation foreign-key relationship rathe
 
 Appearance/profile data belongs in SQL, not global browser storage. LocalStorage can retain device-specific scale and pane preferences. Uploaded profile images must remain bounded and authenticated; bundled portrait assets can be referenced by stable IDs.
 
-## Markdown rules and context
+## Markdown rules, preamble caching, and context management
 
-Each member has an editable **Instructions / rules** Markdown document with ordinary source editing and a safe preview. Store its canonical content and revision in SQL; offer explicit Markdown import/export. A filesystem rules file is optional later, with explicit project authorization, not an implicit scan of arbitrary local directories.
+Each member has an editable **Instructions / rules** Markdown document with ordinary source editing and a safe preview.
 
-Workspace policy, the bot's instructions and optional session-specific instructions have distinct visible scopes. Show which rules and memories are included in the next run. The host enforces permissions independently of all model instructions. Retrieved documents and memory notes are context data and cannot grant tool access.
+### Modular Instruction Separation & Static System Preambles
 
-Capture rules and selected memory provenance when admitting a run. Apply edits to future runs. Keep the input bounded to the selected model's supported context; expose exclusions/limits instead of silently promising unlimited retention. Do not label a rough token estimate as an exact measurement.
+- **Static System Preambles:** Base instructions are assembled and sent as a static `system` message (or Modelfile parameter) once per backend API request rather than repeated across conversational turns.
+- **Context Preservation:** Conversational continuity is maintained by passing the historical message array of completed turns back to the model API per turn, supplemented by KV caching on warm/larger models and planned backend state compression.
+- **Modular Instruction Separation:**
+  - **Tunable Parameters (User/Config-facing):** Council Member persona/role definitions, primary task objectives, and operational mode toggles (e.g., reasoning effort / thinking controls).
+  - **Global Guidelines (System-wide):** Concise operational boundaries (`GuildhallBehaviorSettings`) instructing agents to rely strictly on tool outputs, respect workspace scope, and never fabricate system states, citations, or benchmark metrics.
+
+### Canonical Storage vs. Runtime Memory (Preamble Memoization & SQL History)
+
+- **Markdown Files & SQL Provenance:** Version-controlled Markdown files on disk serve as the source of truth for base agent preambles and configurations, paired with SQL profile records (`AgentDefinitions`) and immutable per-run snapshots (`ChatRuns`). Offer explicit Markdown import/export and authorized file sync without scanning arbitrary local directories.
+- **RAM Memoization (`50–100 MB` Hard Cap):** Load compiled preambles and agent metadata into an in-memory store (`.NET ConcurrentDictionary` in the desktop host runtime; Redis optional only for distributed scale) at runtime to eliminate SQL/disk read bottlenecks per turn. Enforce a strict hard cap of **50–100 MB** for preamble and metadata caching.
+- **Hot-Reloading Safety (`FileSystemWatcher`):** Use file watchers to invalidate and refresh the in-memory `ConcurrentDictionary` cache when source Markdown files change on disk. Reloading preambles affects only subsequent prompts/runs and never wipes or alters active conversations.
+- **Conversation State Persistence (SQL Server Single Source of Truth):** SQL Server (`GuildhallDev`) acts as the single source of truth for active conversation histories, ensuring durability across application restarts. Storing full active conversation histories in RAM is unnecessary for the MVP; SQL Server provides sufficient performance and reliability for a single-user desktop architecture without added cache-sync complexity.
+
+Workspace policy, the bot's instructions and optional session-specific instructions have distinct visible scopes. Show which rules and memories are included in the next run. The ASP.NET Core host enforces hardcoded backend security guardrails (strict read-only file access defaults, credential/sensitive-data exfiltration prevention, mandatory human-in-the-loop approval gates, and Tauri/Host process isolation) independently of all model instructions. Retrieved documents and memory notes are context data and cannot grant tool access.
+
+Capture rules and selected memory provenance when admitting a run. Apply edits to future runs. Keep the input bounded to the selected model's supported context and track **Cross-Turn Budgets** (cumulative token usage and reasoning effort limits across multi-turn sessions); expose exclusions/limits instead of silently promising unlimited retention. Do not label a rough token estimate as an exact measurement.
 
 ## Memory layers
 
@@ -65,11 +80,11 @@ Group existing sessions beneath their profile. Separate Add member and New sessi
 
 Acceptance: two members with two sessions each remain distinct after relaunch; switching sessions restores the right editor, model and history. Lightweight UI implementation plus independent UI review.
 
-### B04 — Markdown instructions — source editor complete; safe preview/import-export remain
+### B04 — Markdown instructions & preamble memoization — source editor complete; safe preview/import-export & file-watcher memoization remain
 
-Add scoped source editor, safe preview and explicit import/export, with length limits and revision conflicts. Snapshot instructions for each accepted run. Do not treat a role label or portrait change as an instruction update.
+Add scoped source editor, safe preview, explicit Markdown file import/export, and runtime RAM memoization (`.NET ConcurrentDictionary` capped at **50–100 MB** with `FileSystemWatcher` hot-reloading when source Markdown files change), with length limits and revision conflicts. Snapshot compiled instructions for each accepted run so hot-reloading affects only subsequent prompts without wiping active conversations. Do not treat a role label or portrait change as an instruction update.
 
-Acceptance: different bot rules affect new replies independently; session/model changes retain the selected member's rules; previous/queued run snapshots remain immutable. Lightweight implementation with deterministic provider assertions.
+Acceptance: different bot rules affect new replies independently; hot-reloaded Markdown changes update the RAM cache for subsequent runs while leaving active conversations intact; session/model changes retain the selected member's rules; previous/queued run snapshots remain immutable. Lightweight implementation with deterministic provider assertions.
 
 ### B05 — Explicit shared and member memory
 
@@ -77,11 +92,11 @@ Add a small versioned SQL MemoryNotes table with shared/member scope, optional o
 
 Acceptance: an approved About you note is available to two members; a private member note is available only to its owner; disabled/forgotten notes disappear from future context. Restart/model changes preserve the notes. Stronger reasoning review for scope/retention; lightweight CRUD implementation.
 
-### B06 — Context assembly and inspector
+### B06 — Context assembly, cross-turn budgets, and inspector
 
-Assemble bounded bot/session instructions, applicable approved notes and the session transcript. Record selected note IDs/revisions and context limits in run provenance. Show included sources and their scopes in Context usage. No automatic whole-history sharing, embeddings or second model call.
+Assemble static system preambles (combining system-wide global guidelines and member tunable parameters from the memoized cache), applicable approved notes, and the session transcript from SQL Server. Record selected note IDs/revisions, context limits, and cumulative **Cross-Turn Budgets** (token usage and reasoning-effort limits across multi-turn sessions) in run provenance. Show included sources, scopes, cross-turn budget consumption, and live **VRAM Residency** (`/api/ps`) in Context usage. No automatic whole-history sharing, full-conversation RAM caching, embeddings or second model call.
 
-Acceptance: fake-provider payload assertions prove isolation and scope; oversized input gives an actionable error; the inspector matches the actual request. Stronger reasoning model for context budgeting and invariants.
+Acceptance: fake-provider payload assertions prove isolation, static system preamble placement, and scope; oversized input or exceeded cross-turn budget gives an actionable error; the inspector matches the actual request. Stronger reasoning model for context budgeting and invariants.
 
 ### B07 — Functional QC and migration checkpoint
 

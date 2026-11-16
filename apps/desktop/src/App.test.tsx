@@ -21,7 +21,7 @@ function responses(database: unknown, models: unknown) {
 beforeEach(() => {
   vi.mocked(bootstrap).mockReset().mockResolvedValue({ hostUrl: 'http://127.0.0.1:43120', token: 'test-token' });
   vi.mocked(request).mockReset();
-  for (const key of ['guildhall.pane.council', 'guildhall.pane.member', 'guildhall.pane.tools']) localStorage.removeItem(key);
+  for (const key of ['guildhall.pane.council', 'guildhall.pane.member', 'guildhall.pane.tools', 'guildhall.composerDrafts.v1']) localStorage.removeItem(key);
 });
 
 describe('connection status', () => {
@@ -708,6 +708,71 @@ describe('connection status', () => {
     await waitFor(() => expect(signal).toBeDefined());
     view.unmount();
     expect(signal?.aborted).toBe(true);
+  });
+  it('keeps conversation list enabled while typing, preserves per-chat drafts, hides shown count, supports accordion collapse, shows disabled assign placeholder, and updates window title/instance badge from bootstrap', async () => {
+    vi.mocked(bootstrap).mockResolvedValueOnce({
+      hostUrl: 'http://127.0.0.1:43121/',
+      token: 'session-token',
+      windowTitle: 'Guildhall v0.1.0 [feature-branch | :43121]',
+      instanceTag: 'v0.1.0 · feature-branch :43121',
+    });
+    const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 1, isArchived: false };
+    const chats = [
+      { id: 'chat-a', title: 'First chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id },
+      { id: 'chat-b', title: 'Second chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id },
+    ];
+    vi.mocked(request).mockImplementation(async (_, path) => {
+      if (path === '/agents') return [profile];
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'one', displayName: 'one' }] };
+      if (path.startsWith('/conversations?')) return chats;
+      if (path === '/conversations/chat-a') return { conversation: chats[0], agent: profile, messages: [] };
+      if (path === '/conversations/chat-b') return { conversation: chats[1], agent: profile, messages: [] };
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+    render(<App />);
+    const openFirst = await screen.findByRole('button', { name: 'Open First chat' });
+    const openSecond = screen.getByRole('button', { name: 'Open Second chat' });
+
+    expect(document.title).toBe('Guildhall v0.1.0 [feature-branch | :43121]');
+    expect(screen.getByText('v0.1.0 · feature-branch :43121')).toBeInTheDocument();
+
+    // Filter bar should not render "N shown" next to Chats and Archived.
+    const filterGroup = screen.getByRole('group', { name: 'Conversation list filter' });
+    expect(within(filterGroup).queryByText(/shown/i)).toBeNull();
+
+    // Open First chat and type a draft: conversation list remains enabled and draft is preserved across switches.
+    fireEvent.click(openFirst);
+    const composer = await screen.findByLabelText('Message');
+    fireEvent.change(composer, { target: { value: 'Draft for first chat' } });
+    expect(openSecond).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Select Maren' })).toBeEnabled();
+
+    fireEvent.click(openSecond);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second chat' })).toBeInTheDocument());
+    expect(composer).toHaveValue('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open First chat' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'First chat' })).toBeInTheDocument());
+    expect(composer).toHaveValue('Draft for first chat');
+    expect(JSON.parse(localStorage.getItem('guildhall.composerDrafts.v1') ?? '{}')).toEqual({ 'chat:chat-a': 'Draft for first chat' });
+
+    // Right-click on conversation row opens menu with disabled "Assign to guild member…" placeholder.
+    const firstRow = screen.getByRole('button', { name: 'Open First chat' }).closest('.conversation-row')!;
+    fireEvent.contextMenu(firstRow);
+    const assignButton = screen.getByRole('button', { name: 'Assign First chat to guild member — planned' });
+    expect(assignButton).toBeDisabled();
+    expect(assignButton).toHaveTextContent('Assign to guild member…');
+
+    // Accordion collapse/expand hides and restores the member's sessions.
+    const collapseButton = screen.getByRole('button', { name: 'Collapse Maren sessions' });
+    expect(collapseButton).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(collapseButton);
+    expect(screen.getByRole('button', { name: 'Expand Maren sessions' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Open First chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Maren sessions' }));
+    expect(screen.getByRole('button', { name: 'Open First chat' })).toBeInTheDocument();
   });
 });
 

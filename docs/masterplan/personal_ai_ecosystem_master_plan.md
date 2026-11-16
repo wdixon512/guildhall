@@ -1,9 +1,9 @@
 # Personal AI Ecosystem: Master Architecture and Implementation Plan
 
-**Version:** 1.2 (Unified "One Guildhall" multi-engine, CLI harness, and service-wrapping revision)  
-**Prepared:** November 16, 2026  
-**Status:** Active architectural baseline (Phase 0 complete; Phase 1 in progress)  
-**Primary objective:** Build a local-first, self-hosted desktop AI command center ("Guildhall") where a council of persistent, named Guild Members can be powered by local models (Ollama), direct Cloud Model APIs (Gemini, Claude, OpenAI), or wrapped local CLI Agent Harnesses (Gemini CLI, Claude Code, Codex CLI, Cursor CLI), sharing unified SQL Server memory, MCP tools, diff reviews, and host-enforced permission gates.
+**Version:** 1.3 (Unified "One Guildhall" architecture, local inference dynamics, preamble memoization, backend guardrails, and 5-tier resilience)
+**Prepared:** November 16, 2026
+**Status:** Active architectural baseline (Phase 0 complete; Phase 1 in progress)
+**Primary objective:** Build a local-first, self-hosted desktop AI command center ("Guildhall") where a council of persistent, named Guild Members can be powered by local models (Ollama), direct Cloud Model APIs (Gemini, Claude, OpenAI), or wrapped local CLI Agent Harnesses (Gemini CLI, Claude Code, Codex CLI, Cursor CLI), sharing unified SQL Server state, hot-reloaded Markdown preambles memoized in RAM, MCP tools, diff reviews, 5-tier health resilience, and hardcoded backend permission gates.
 
 ---
 
@@ -139,9 +139,15 @@ Every Council Member profile (`AgentDefinition`) specifies a default backing eng
 - Categorizes every capability into explicit security tiers (Tier 0: None, Tier 1: Read-only local, Tier 2: Controlled workspace writes, Tier 3: Sensitive/remote/external services like GitHub, Google Drive, Gmail, or SQL writes).
 - Logs all tool invocations, arguments, approvals, and results with automatic secret redaction.
 
-### Persistence & Data Ownership
+### Persistence, Caching & Data Ownership
 
-- **SQL Server (`GuildhallDev`):** Stores installation metadata, `GuildhallBehaviorSettings`, `AgentDefinitions` (Council members), `Conversations` (sessions), `ChatRuns` (immutable per-turn model/harness/instruction/settings snapshots), `ChatMessages`, `ChatAttachments` (`varbinary(max)`), and planned `MemoryNotes` / `Workspaces` / `Schedules`.
+- **Canonical Storage vs. Runtime Memory (Preambles & Configurations):**
+  - **Markdown Files on Disk:** Serve as the version-controlled source of truth on disk for base agent preambles, persona definitions, and rule configurations (paired with immutable per-run snapshots in SQL `ChatRuns`).
+  - **RAM Memoization (`50–100 MB` Hard Cap):** Compiled system preambles and agent metadata are loaded at runtime into an in-memory store (`.NET ConcurrentDictionary` in single-host desktop mode; Redis optional only if scaled to distributed hosts later) with a strict **50–100 MB** hard allocation cap to eliminate SQL/disk read bottlenecks on every conversational turn.
+  - **Hot-Reloading Safety (`FileSystemWatcher`):** File watchers monitor source Markdown preamble files on disk and automatically invalidate/refresh the in-memory `ConcurrentDictionary` cache when modified. Reloading preambles affects only subsequent prompts/runs and never wipes or mutates active conversations or in-flight runs.
+- **Conversation State Persistence (`GuildhallDev` SQL Server):**
+  - **SQL Server as Single Source of Truth:** Active conversation histories (`Conversations`, `ChatRuns`, `ChatMessages`, `ChatAttachments`), `GuildhallBehaviorSettings`, `AgentDefinitions`, and planned `MemoryNotes` / `Workspaces` / `Schedules` live in the dedicated `GuildhallDev` SQL Server database, guaranteeing ACID durability across application and host restarts.
+  - **MVP Scoping (No Full-Transcript RAM Cache):** Storing full active conversation histories in RAM is unnecessary for the MVP; SQL Server provides sufficient performance and reliability for a single-user desktop architecture without introducing dual-write cache-synchronization complexity.
 - **Separate SQL Identities:** Explicit schema migrations run under the owner's Windows identity (`scripts/database/Migrate-Database.ps1` with preview-by-default and `-Execute` after approval). The running host uses the restricted `guildhall_runtime` SQL login with table-specific DML grants and zero DDL/`db_owner` authority.
 - **OS-Protected Secret Storage:** Runtime SQL credentials, Cloud API keys, and OAuth tokens are stored via Windows DPAPI / OS credential APIs (`%LOCALAPPDATA%\Guildhall\`), never in SQL tables, frontend bundles, or source control.
 
@@ -151,20 +157,21 @@ Every Council Member profile (`AgentDefinition`) specifies a default backing eng
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Desktop shell | Tauri 2 | Native window, strict CSP/capabilities, native folder picker |
+| Desktop shell (Tier 1) | Tauri 2 | Native window, strict CSP/capabilities, process-isolated from backend host |
 | Frontend | React + strict TypeScript + Vite | Custom "The Council" design system; zero heavy UI/state frameworks |
-| Agent host | ASP.NET Core (.NET 10 LTS) | Single host project (`Guildhall.AgentHost`) with internal modules |
+| Agent host (Tier 2) | ASP.NET Core (.NET 10 LTS) | Central orchestrator managing agent lifecycles, reasoning loops, tool bindings, and hardcoded security guardrails |
+| Preamble & metadata cache | In-memory `.NET ConcurrentDictionary` (`50–100 MB` cap) | Hot-reloaded via `FileSystemWatcher` from version-controlled Markdown files on disk |
 | Host-to-UI transport | Authenticated REST + 250ms Snapshot Polling (SSE optional) | Phase 1 uses committed SQL snapshot polling (`GET /conversations/{id}`); bounded SSE/events available where needed |
-| Persistence | SQL Server (EF Core migrations) | Dedicated `GuildhallDev` database; separate migration and runtime logins |
-| Local inference | Ollama (`127.0.0.1:11434`) | Configurable CPU/GPU policy and warm retention (`0–900s`) |
+| Persistence (Tier 3) | SQL Server (EF Core migrations) | Dedicated `GuildhallDev` database; single source of truth for active conversation histories |
+| Local inference (Tier 4) | Ollama (`127.0.0.1:11434`) | Configurable CPU/GPU policy, warm retention (`0–900s`), and VRAM residency tracking |
 | Cloud Model APIs | Gemini API, Claude API, OpenAI API | Direct HTTP adapters in `.NET` host; opt-in via OS-stored API keys |
 | CLI Agent Harnesses | Gemini CLI, Claude Code, Codex CLI, Cursor CLI | Driven via `stdio` ACP (JSON-RPC 2.0) or `--output-format stream-json` |
-| Tool protocol | Official MCP C# SDK | Local `stdio` and remote Streamable HTTP MCP servers |
+| Tool protocol (Tier 5) | Official MCP C# SDK | Local `stdio` and remote Streamable HTTP MCP servers with health checks and rollback hooks |
 | Secret storage | Windows DPAPI / OS Credential Manager | No plaintext tokens in SQL, logs, or env files |
 | Private networking | WireGuard (Tailscale optional) | Used in Stage B/Phase 5 for private Droplet/home connectivity |
 | Automated testing | xUnit (deterministic + isolated `GuildhallTest_*` SQL), Vitest, Playwright | Real isolated SQL databases and deterministic fake HTTP/CLI transports |
 
-**Intentionally excluded:** VS Code extension dependencies, Redis, Kubernetes, dedicated vector databases, LangGraph/external orchestration frameworks, mandatory Docker, and hosted control planes.
+**Intentionally excluded for MVP:** Full conversation history caching in RAM, mandatory Redis (`.NET ConcurrentDictionary` handles the 50–100 MB preamble memoization cap locally), VS Code extension dependencies, Kubernetes, dedicated vector databases, LangGraph/external orchestration frameworks, mandatory Docker, and hosted control planes.
 
 ---
 
@@ -203,7 +210,7 @@ Because SQL Server owns the normalized transcript and memory notes:
 
 ## 7. Common contracts, persistence, and execution lifecycle
 
-### Core SQL entities (Implemented & Planned)
+### 7.1 Core SQL entities (Implemented & Planned)
 
 - **`GuildhallBehaviorSettings` (Implemented):** Singleton versioned table storing the workspace-wide Guildhall behavior policy captured into every run's snapshot.
 - **`AgentDefinitions` (Implemented, extended in Phase 2/3):** Persistent Council Member profiles (`Id`, `Name`, `Role`, `PortraitId`, `CustomPortrait`, `Accent`, `Instructions`, `DefaultModelId`, `IsArchived`, `Revision`; extended in Phase 2 with `DefaultProviderId` / `HarnessMode` and in Phase 3 with `EnabledToolIds` / `PermissionPolicy`).
@@ -212,21 +219,59 @@ Because SQL Server owns the normalized transcript and memory notes:
 - **`ChatMessages` & `ChatAttachments` (Implemented):** User/assistant message pairs and bounded `varbinary(max)` file attachments (up to 5 files, 20 MiB each, 50 MiB per turn).
 - **`MemoryNotes` (Phase 1 B05/B06):** Versioned SQL notes scoped to `AboutYou` (shared across the council after user review), `Member` (private to one Guild Member across its sessions), or `Project` (scoped to an authorized workspace in Phase 4).
 
-### Streaming, checkpoints, and event model
+### 7.2 System Instructions & Context Management
+
+- **Static System Preambles:** Configure base instructions as static `system` messages (or Modelfile parameters) in backend API calls once per request rather than repeating them across conversational turns. This preserves prompt prefix consistency so local and hosted engines can reuse cached system-prefix states.
+- **Context Preservation:** Conversational continuity is maintained by passing the ordered historical message array of completed turns back to the model API per turn, supplemented by KV caching on warm/larger models and planned backend state compression / reviewed compaction for long-running sessions.
+- **Modular Instruction Separation:**
+  - **Tunable Parameters (User/Config-facing):** Council Member persona/role definitions, primary task objectives, and operational mode toggles (such as reasoning effort / thinking controls and model selection).
+  - **Global Guidelines (System-wide):** Concise operational boundaries (`GuildhallBehaviorSettings` / system-wide guidelines) instructing agents to rely strictly on verified tool outputs, respect workspace scope, and never fabricate system states, citations, or benchmark metrics.
+
+### 7.3 Caching & Persistence Architecture
+
+- **Canonical Storage vs. Runtime Memory:**
+  - **Markdown Files:** Serve as the version-controlled source of truth on disk for agent preambles and configurations, paired with SQL profile records and immutable per-run provenance snapshots in `ChatRuns`.
+  - **RAM Memoization (`50–100 MB` Hard Cap):** Load compiled preambles and agent metadata into an in-memory store (`.NET ConcurrentDictionary` in the single-host desktop runtime; Redis optional only if scaled out later) at runtime to eliminate SQL/disk read bottlenecks per turn. Allocate a strict hard cap of **50–100 MB** for preamble and metadata caching.
+  - **Hot-Reloading Safety:** Use file watchers (`FileSystemWatcher`) to invalidate and refresh the RAM cache automatically when source Markdown files change on disk. Reloading preambles affects only subsequent prompts/runs and never wipes or alters active conversations.
+- **Conversation State Persistence:**
+  - **SQL Server (`GuildhallDev`):** Acts as the single source of truth for active conversation histories, ensuring durability across application and host restarts.
+  - **MVP Scoping:** Storing full active conversation histories in RAM is unnecessary for MVP; SQL Server provides sufficient performance and reliability for a single-user desktop architecture without added cache-sync complexity.
+
+### 7.4 Streaming, checkpoints, and event model
 
 - **Committed-Snapshot Polling (Active Phase 1 transport):** The runner batches incoming fragments from the active provider/harness into atomic SQL checkpoints (every ~500ms, 4 KiB, or terminal state). The desktop polls `GET /conversations/{id}` every 250ms with one request in flight and smoothly reveals only committed text.
-- **Structured Run Events & Approvals (Phase 3/4 extension):** When tools or CLI harnesses are active, runs additionally record structured step events (`tool.requested`, `approval.requested`, `approval.resolved`, `tool.completed`, `diff.proposed`, `agent.handed_off`) so the UI can pause a run for human approval and render full tool traces in the Run Inspector.
+- **Structured Run Events & Approvals (Phase 3/4 extension):** When tools or CLI harnesses are active, runs additionally record structured step events (`tool.requested`, `approval.requested`, `approval.resolved`, `tool.completed`, `tool.rolled_back`, `diff.proposed`, `agent.handed_off`, `agent.delegated`) so the UI can pause a run for human approval and render full tool traces in the Run Inspector.
+
+### 7.5 Additional State Tracking Requirements
+
+1. **Tool Execution Rollbacks (Phase 3/4):** Implement transactional or compensating rollback mechanisms for failed, rejected, or cancelled tool actions—such as Git worktree/file checkpoint rollback for workspace mutations, compensating cleanup steps for multi-step local operations, and explicit status tracking distinguishing reversible local actions from non-reversible external side effects.
+2. **VRAM Residency Tracking (Phase 1/2/8):** Monitor which models are currently loaded in VRAM/RAM (via Ollama `/api/ps` alongside host `keep_alive` retention timers) to surface live model residency in the UI, inform routing, and prevent unexpected cold-swap latency stalls across turns or Council Members.
+3. **Cross-Turn Budgets (Phase 1/2/7):** Track cumulative token usage, context consumption, and reasoning-effort limits across multi-turn sessions and delegated child runs, enforcing configurable session budgets before admitting new turns.
+4. **Delegation Dependency Graphs (Phase 7):** Maintain durable directed execution graphs (DAGs) in SQL Server when multiple Council Members or sub-agents delegate tasks to one another—tracking parent/child run edges, blocking/awaiting states, inherited budgets, and cascading cancellation/error propagation.
 
 ---
 
-## 8. Local inference & resource strategy
+## 8. Local inference & hardware dynamics
 
-### Hardware & resource defaults
+### 8.1 Hardware & resource defaults
 
-- Primary desktop has an **NVIDIA RTX 3070 (8 GB VRAM)**.
+- Primary desktop pairs a modern high-cache CPU (such as the **AMD Ryzen 7 9800X3D** with large 3D V-Cache / L3 cache and fast DDR5 system memory) with an **NVIDIA RTX 3070 (8 GB VRAM)**.
 - To keep the desktop responsive for gaming and creative work, `Guildhall.AgentHost` defaults to **CPU-only inference (4 threads, 4096 context, `keep_alive: 0` unload-after-reply, `think: false`)**.
-- Users can opt into GPU acceleration (`-UseGpu` / `GUILDHALL_USE_GPU=true`) and bounded warm retention (`-KeepModelWarmSeconds 0..900`) via the launcher or future Workspace Resource Settings.
+- Users can opt into GPU acceleration (`-UseGpu` / `GUILDHALL_USE_GPU=true`) and bounded warm retention (`-KeepModelWarmSeconds 0..900`) via the launcher or Workspace Resource Settings, backed by **VRAM Residency Tracking** to prevent cold-swap latency stalls when conversing with active models.
 - Benchmark installed models (e.g., `qwen3:1.7b`, `qwen3:4b`, `qwen3-vl:2b/4b`, and 7B/8B coding models) on cold load, time-to-first-token, tokens/sec, RAM/VRAM residency, and instruction adherence before changing defaults.
+
+### 8.2 CPU vs. GPU Trade-offs & the Memory Bandwidth Wall
+
+- **CPU vs. GPU Trade-offs:** For short conversational turns or smaller models, a modern CPU (such as the AMD Ryzen 7 9800X3D with its large L3 cache) paired with fast DDR5 memory handles inference smoothly without a drastic perceived drop in speed compared to a GPU, while leaving dedicated VRAM completely uncontested for games or graphics workloads.
+- **Memory Bandwidth Wall:** Dedicated GPUs remain essential for sustained loads, long context windows, and heavier quantization tiers due to vastly superior raw memory bandwidth (hundreds of GB/s on GPU VRAM vs. tens of GB/s on system DDR5 RAM). As context length or model weight size grows beyond L3 cache locality, token generation becomes strictly memory-bandwidth bound.
+
+### 8.3 Core Inference Concepts
+
+- **Inference:** A trained model applying learned weights to unseen input data to generate predictions or text (as distinct from training or fine-tuning, which modify model weights).
+- **Quantization:** Compressing model weights to lower numerical precision (e.g., FP16 to Q4_K_M / Q8_0) to reduce VRAM and system RAM footprints while balancing output quality.
+- **KV Cache:** Storing key-value attention states from past tokens in memory to accelerate subsequent token generation without recomputing prior context—making static system preambles and warm model residency critical for multi-turn responsiveness.
+- **Hallucination:** Confident generation of factually incorrect or fabricated outputs; mitigated in Guildhall through global guidelines requiring strict reliance on tool outputs, explicit evidence provenance, and temperature/reasoning controls.
+- **Prompt Injection:** Malicious or untrusted external inputs (inside files, web pages, attachments, or database rows) attempting to override system-level instructions or hijack tool execution; mitigated via hardcoded ASP.NET Core backend guardrails and process isolation rather than prompt instructions alone.
 
 ---
 
@@ -235,9 +280,9 @@ Because SQL Server owns the normalized transcript and memory notes:
 ### Tool authorization tiers
 
 - **Tier 0 — No external tools:** Pure conversation, context inspector, and SQL-backed memory notes.
-- **Tier 1 — Read-only local workspace:** List/read files inside an authorized project root, inspect Git status/log/diffs, and query read-only SQL views/schemas.
-- **Tier 2 — Controlled workspace writes & execution:** Edit files in an isolated Git worktree, run allowlisted build/test commands in a scrubbed environment, and propose diffs for review.
-- **Tier 3 — Sensitive, external, or destructive operations:** Git commits/pushes, database writes, GitHub PR creation, Gmail/Google Drive actions, remote SSH/Droplet commands. Always require explicit scope and human approval unless explicitly scoped under a conspicuously marked danger policy.
+- **Tier 1 — Read-only local workspace (Default):** List/read files inside an authorized project root, inspect Git status/log/diffs, and query read-only SQL views/schemas.
+- **Tier 2 — Controlled workspace writes & execution:** Edit files in an isolated Git worktree (with transactional/compensating **Tool Execution Rollbacks**), run allowlisted build/test commands in a scrubbed environment, and propose diffs for review.
+- **Tier 3 — Sensitive, external, or destructive operations:** Git commits/pushes, database writes, GitHub PR creation, Gmail/Google Drive actions, remote SSH/Droplet commands. Enforced by mandatory human-in-the-loop approval gates in the ASP.NET Core host.
 
 ---
 
@@ -249,9 +294,9 @@ Whether a Council Member is using Guildhall's native `.NET` MCP loop (with Ollam
 
 1. **Project attachment:** The user selects a local folder or Git repository via Tauri's native picker (no GitHub account required).
 2. **Worktrees vs. Sandboxes (Critical distinction):**
-   - **Git worktrees** isolate file modifications so an agent or parallel session can edit and run tests without dirtying the user's active working tree.
-   - **Worktrees are NOT security sandboxes.** Process, path, environment, and command restrictions must be enforced by `Guildhall.AgentHost` (validating canonical paths against the project root, scrubbing secret environment variables, enforcing command timeouts/output caps, and mediating CLI harness permission flags).
-3. **Review before merge:** Proposed file changes surface in Guildhall's **Git changes / Diff** pane. The user can inspect diffs, request line-specific revisions from the Council Member, or approve applying/merging the worktree changes.
+   - **Git worktrees** isolate file modifications so an agent or parallel session can edit and run tests without dirtying the user's active working tree, and provide a clean checkpoint substrate for **Tool Execution Rollbacks** when a tool action or test validation fails.
+   - **Worktrees are NOT security sandboxes.** Process, path, environment, and command restrictions must be enforced by `Guildhall.AgentHost` (validating canonical paths against the project root, enforcing strict read-only file access defaults, scrubbing secret environment variables, enforcing command timeouts/output caps, and mediating CLI harness permission flags).
+3. **Review before merge:** Proposed file changes surface in Guildhall's **Git changes / Diff** pane. The user can inspect diffs, trigger rollbacks of failed tool edits, request line-specific revisions from the Council Member, or approve applying/merging the worktree changes.
 
 ---
 
@@ -261,7 +306,7 @@ Whether a Council Member is using Guildhall's native `.NET` MCP loop (with Ollam
 
 | Ecosystem | Pillar 1: Direct Model API Adapter | Pillar 2: Local CLI Harness Adapter | Auth & Credential Storage |
 |---|---|---|---|
-| **Local / Open Weights** | Ollama (`/api/tags`, `/api/chat`) | Optional local CLI tools | None required (loopback HTTP) |
+| **Local / Open Weights** | Ollama (`/api/tags`, `/api/chat`, `/api/ps`) | Optional local CLI tools | None required (loopback HTTP) |
 | **Google Gemini** | Gemini REST API (`generativelanguage.googleapis.com`) | **Gemini CLI** (`gemini --acp` or `gemini -p --output-format stream-json`) | API key in Windows DPAPI **or** Gemini CLI Google OAuth login |
 | **Anthropic Claude** | Anthropic Messages API (`/v1/messages`) | **Claude Code CLI** (`claude -p --output-format stream-json` / ACP) | API key in Windows DPAPI **or** Claude Code subscription login |
 | **OpenAI / ChatGPT** | OpenAI Responses / Chat Completions API | **OpenAI Codex CLI** (`codex exec --json` / `codex app-server`) | API key in Windows DPAPI **or** Codex CLI ChatGPT Plus/Pro login |
@@ -270,21 +315,22 @@ Whether a Council Member is using Guildhall's native `.NET` MCP loop (with Ollam
 ### Rules preserving vendor independence
 
 - **No vendor owns the transcript:** Switching a conversation from `Claude Code CLI` to `Gemini 2.5 Pro API` to `Local Qwen3 (Ollama)` works seamlessly because Guildhall stores the canonical messages and memory notes in SQL Server and reconstructs the prompt context on every turn.
-- **Honest capability & usage reporting:** If a provider or CLI reports exact token counts and billing rates, display them; if a CLI subscription or local model does not report dollar cost, show measured duration/tokens and label cost as `Subscription / Not billed per token` or `Local inference` rather than fabricating numbers.
+- **Honest capability & usage reporting:** If a provider or CLI reports exact token counts and billing rates, display them; if a CLI subscription or local model does not report dollar cost, show measured duration/tokens (tracked against **Cross-Turn Budgets**) and label cost as `Subscription / Not billed per token` or `Local inference` rather than fabricating numbers.
 
 ---
 
-## 12. Deployment topology and networking
+## 12. Deployment topology, networking, and multi-tier resilience
 
 ### Stage A: Desktop-only (Phases 0–4)
 
 ```text
 Windows desktop
-  Tauri UI <-> ASP.NET Core AgentHost (127.0.0.1:43120)
-                  |-- SQL Server (localhost / GuildhallDev)
-                  |-- Ollama (127.0.0.1:11434)
-                  |-- Optional Cloud APIs (HTTPS outbound only)
-                  |-- Optional Local CLI Harnesses & stdio MCP servers
+  [Tier 1] Tauri UI <-> [Tier 2] ASP.NET Core AgentHost (127.0.0.1:43120)
+                                    |-- [In-Memory] .NET ConcurrentDictionary (50–100 MB Markdown preamble cache + FileSystemWatcher)
+                                    |-- [Tier 3] SQL Server (localhost / GuildhallDev — active conversation state)
+                                    |-- [Tier 4] Ollama (127.0.0.1:11434 — local inference & VRAM residency)
+                                    |-- [Tier 5] Active MCP Tool Servers (stdio / Streamable HTTP) & Local CLI Harnesses
+                                    |-- Optional Cloud APIs (HTTPS outbound only)
 ```
 
 No inbound public ports, no Droplet dependency, no router/firewall changes.
@@ -303,15 +349,30 @@ SQL Server + Ollama  <--- WireGuard VPN ---> Authenticated MCP / Relay Host
 
 - Decouple `Guildhall.AgentHost`, Ollama, or scheduled task execution onto an always-on home server when 24/7 background tasks or larger GPUs justify it, without changing the desktop UI contracts.
 
+### Multi-Layer Health Checks, Auto-Retry & Graceful Degradation
+
+Local background services (such as Ollama daemons or MCP subprocesses) can crash, hit OOM limits, or fail to restart after updates. Guildhall implements health checks, bounded auto-retry logic, and graceful degradation across all **five architectural tiers**:
+
+1. **Tier 1 — Tauri UI Process:** Monitors host reachability and stream/poll health; preserves unsent composer drafts and client request IDs on transient disconnects; degrades gracefully to clear status/reconnect banners without freezing the window or auto-resubmitting mutations.
+2. **Tier 2 — ASP.NET Core Agent Host:** The central orchestrator managing agent lifecycles, reasoning loops, and tool bindings. Exposes authenticated liveness (`/health`) independently of downstream outages, gates work admission on readiness (`/ready`), reconciles abandoned runs on startup, and isolates background worker faults.
+3. **Tier 3 — SQL Server Database:** Verified via `/ready` schema and connectivity probes; applies bounded retry/backoff for transient read faults; aborts active generation cleanly if SQL becomes unreachable mid-run and blocks new admissions until reconciliation succeeds.
+4. **Tier 4 — Ollama Inference Service:** Probes `/api/tags` and `/api/ps` (for **VRAM Residency Tracking**); detects daemon crashes, OOM evictions, stalled streams, or post-update restart failures; applies bounded connection/first-token/idle timeouts and surfaces actionable recovery states without crashing the Agent Host.
+5. **Tier 5 — Active MCP (Model Context Protocol) Tool Servers:** Tracks per-server health (`Connected`, `Degraded`, `Failed`, `Disconnected`) across local `stdio` child processes and remote `Streamable HTTP` endpoints; implements bounded auto-retry and subprocess restart backoff; degrades gracefully by disabling only the affected tool server while keeping chat and healthy tools operational.
+
 ---
 
-## 13. Security and privacy baseline
+## 13. Security, backend enforcement, and process isolation
 
-1. **Loopback & Origin Boundary:** Host binds to `127.0.0.1`, requires a cryptographic per-session bearer token (32–128 chars), validates `Origin` and `Host`, and never puts tokens in URLs, browser storage, or logs.
-2. **Untrusted Content Isolation:** Model outputs, repository files, attachments, web/search results, database rows, and memory notes are treated strictly as **data**, never as authority to alter permissions, change instructions, or approve tools.
-3. **Database Least Privilege:** Runtime login (`guildhall_runtime`) has only explicit table-level `SELECT`/`INSERT`/`UPDATE` (and narrow parent-row `DELETE` on `Conversations` and `AgentDefinitions`). Schema changes require the separate Windows migration identity and explicit owner approval.
-4. **Subprocess & CLI Harness Containment:** When spawning MCP servers or CLI harnesses (`gemini`, `claude`, `codex`, `agent`), scrub inherited environment variables, enforce execution timeouts and output byte caps, restrict working directories to approved project roots/worktrees, and intercept/gate destructive actions according to the active Guildhall permission mode.
-5. **Safe Rendering & Redaction:** Render Markdown/GFM without raw HTML execution; open external links safely in the OS default browser after protocol validation (`https:`/`http:`); redact secrets from all logs and exports.
+1. **Hardcoded Backend Guardrails (Never Rely Solely on Prompts):** Prompt instructions alone are never treated as a security boundary. Critical operational boundaries are hardcoded and enforced in the ASP.NET Core backend layer (`Guildhall.AgentHost`):
+   - **Strict read-only file access defaults:** Tools and harnesses default to read-only inspection confined to explicitly authorized workspace roots; arbitrary host filesystem traversal is blocked in code.
+   - **Prevention of credential or sensitive data exfiltration:** Outbound requests, tool arguments, logs, and exports are scrubbed and validated by the host to prevent exfiltration of DPAPI secrets, session tokens, connection strings, `.env` files, or private keys.
+   - **Mandatory human-in-the-loop approval gates:** Any destructive, mutating, or external-facing system operation (file writes outside safe checkpoints, shell command execution, database mutations, Git pushes, external API writes) pauses execution at a host-enforced approval gate requiring explicit user confirmation in the UI.
+2. **Process Isolation (Tauri UI vs. ASP.NET Core Host):** Maintain strict OS process isolation between the Tauri WebView UI frontend and the ASP.NET Core agent host backend. The frontend has no direct shell, filesystem-write, database, or subprocess capability, ensuring that prompt injections in model output or untrusted data cannot escalate from the UI or reasoning loop into local OS compromise.
+3. **Loopback & Origin Boundary:** Host binds to `127.0.0.1`, requires a cryptographic per-session bearer token (32–128 chars), validates `Origin` and `Host`, and never puts tokens in URLs, browser storage, or logs.
+4. **Untrusted Content Isolation:** Model outputs, repository files, attachments, web/search results, database rows, and memory notes are treated strictly as **data**, never as authority to alter permissions, change instructions, or approve tools.
+5. **Database Least Privilege:** Runtime login (`guildhall_runtime`) has only explicit table-level `SELECT`/`INSERT`/`UPDATE` (and narrow parent-row `DELETE` on `Conversations` and `AgentDefinitions`). Schema changes require the separate Windows migration identity and explicit owner approval.
+6. **Subprocess & CLI Harness Containment:** When spawning MCP servers or CLI harnesses (`gemini`, `claude`, `codex`, `agent`), scrub inherited environment variables, enforce execution timeouts and output byte caps, restrict working directories to approved project roots/worktrees, and intercept/gate destructive actions according to the active Guildhall permission mode.
+7. **Safe Rendering & Redaction:** Render Markdown/GFM without raw HTML execution; open external links safely in the OS default browser after protocol validation (`https:`/`http:`); redact secrets from all logs and exports.
 
 ---
 
@@ -322,9 +383,13 @@ The repository follows a flat, reviewable monorepo structure without speculative
 ```text
 guildhall/
   AGENTS.md                                  # Engineering principles & doc routing rules
+  CLAUDE.md                                  # Claude Code / multi-harness instruction entry point
   README.md                                  # Setup, launch, migration, and verification guide
   Guildhall.slnx                             # .NET 10 solution
+  .agents/
+    roster.md                                # Development agent roster, model tiers & worktree rules
   docs/
+    coding-standards.md                      # Authoritative .NET 10, EF Core 10, Tauri 2 & React 19 standards
     masterplan/
       personal_ai_ecosystem_master_plan.md   # This master architecture & roadmap document
       product-roadmap-amendments.md          # Owner-approved cross-phase amendments & boundaries
@@ -360,12 +425,28 @@ guildhall/
     Guildhall.AgentHost.Tests/               # Deterministic & isolated SQL integration tests
   scripts/                                   # PowerShell 7 & SQL scripts organized by domain:
     database/                                #   Provisioning, migrations, and SQL upgrade runners
-    startup/                                 #   Prerequisite checks, dev launcher, and status
+    startup/                                 #   Prerequisite checks, dev launcher, status, and stop scripts
     sql/                                     #   Reviewed SQL scripts
     misc/                                    #   Shared helpers, verification, and smoke tests
 ```
 
-**Documentation & Token-Spend Rule:** Coding agents must consult `AGENTS.md` and only the relevant `docs/masterplan/phase N/` documents before exploring source code, and place new phase documentation inside its corresponding `docs/masterplan/phase N/` subfolder.
+**Documentation & Token-Spend Rule:** Coding agents must consult `AGENTS.md` (or `CLAUDE.md`) and only the relevant `docs/masterplan/phase N/` documents before exploring source code, and place new phase documentation inside its corresponding `docs/masterplan/phase N/` subfolder.
+
+### 14.1 Repository Agent Management & Multi-Instance Worktree Orchestration
+
+This same orchestration pattern governs **both** how development agents build Guildhall today and how Guildhall's own Council Members and scheduled automations will manage parallel project worktrees in Phases 4, 6, and 7:
+
+- **Coordinator-Owned `main` & Isolated Feature Worktrees:** Only the Coordinator merges into `main` or applies approved schema migrations to `GuildhallDev`. Parallel coding agents work in isolated Git worktrees on scoped branches, sharing the Windows DPAPI runtime credential (`%LOCALAPPDATA%\Guildhall\dev\runtime.credential.xml`) read-only and batching git pushes to minimize CI spend.
+- **Side-by-Side Multi-Instance Hosting (`-AutoPort`, `-HostPort`, `-FrontendPort`, `-Replace`):**
+  - `scripts/startup/Start-Dev.ps1` supports `-AutoPort` (automatically selecting free loopback ports when `43120`/`1420` are in use), explicit `-HostPort` / `-FrontendPort`, and `-Replace` (cleanly stopping any conflicting Guildhall session on the target ports before starting).
+  - Active sessions register in `%LOCALAPPDATA%\Guildhall\dev\sessions\<sessionId>.json`, allowing `scripts/startup/Get-DevStatus.ps1` to inspect all running worktree instances and `scripts/startup/Stop-Dev.ps1` (`-All`, `-SessionId`, `-Checkout`, `-Port`) to stop them cleanly.
+- **Version & Branch Window Tagging (`GUILDHALL_WINDOW_TITLE` / `GUILDHALL_INSTANCE_TAG`):**
+  - Every launched window automatically computes its version tag (from `tauri.conf.json`, e.g., `v0.1.0`), Git branch / worktree name, optional `-WindowTag`, and active port pair, formatting the native OS window title (`Guildhall v0.1.0 [branch | :43121]`) and rendering an in-app header badge (`v0.1.0 · branch :43121`).
+  - Both human reviewers and UI/Browser automation harnesses can immediately identify and target which branch, version, and port each running window is testing.
+- **Standard End-of-Implementation Handoff:** Every agent implementation concludes with:
+  1. Copy-pasteable command(s) to run Guildhall in the active worktree with GPU mode and maximum model retention (`Start-Dev.ps1 -UseGpu -KeepModelWarmSeconds 900` by default, with `-Replace` and `-AutoPort` variants).
+  2. Migrations run (if applicable).
+  3. Manual testing notes / functional QC checklist.
 
 ---
 
@@ -378,8 +459,8 @@ guildhall/
 
 ### Phase 1: Local AI Workspace & Council MVP — **IN PROGRESS**
 
-- **Scope:** Persistent Council Member profiles (`AgentDefinitions`) with custom roles, portraits, accents, and Markdown instructions; member-grouped sessions (`Conversations`); progressive committed-snapshot streaming (`ChatRuns`/`ChatMessages`); Stop and startup interrupted-run reconciliation; bounded per-session queue (up to 8 turns) with `Send Now`, `Edit`, and `Remove`; local file/image attachments (`ChatAttachments`); reversible member/session archival and confirmed permanent deletion; workspace-wide behavior policy (`GuildhallBehaviorSettings`); versioned JSON export; and explicit SQL memory notes (`About you` and Member memory, B05/B06) plus the Context Inspector.
-- **Done when:** All Phase 1 functional gates and live local-model speed/quality benchmarks pass in the native window.
+- **Scope:** Persistent Council Member profiles (`AgentDefinitions`) with custom roles, portraits, accents, and modular Markdown instructions (separating user-tunable parameters from global system guidelines, configured as static system preambles); version-controlled Markdown preambles memoized in a `.NET ConcurrentDictionary` (`50–100 MB` hard cap) with `FileSystemWatcher` hot-reloading that updates only subsequent turns; member-grouped sessions (`Conversations`) persisted in SQL Server as the single source of truth (without full-history RAM caching in MVP); progressive committed-snapshot streaming (`ChatRuns`/`ChatMessages`); Stop and startup interrupted-run reconciliation; bounded per-session queue (up to 8 turns) with `Send Now`, `Edit`, and `Remove`; local file/image attachments (`ChatAttachments`); reversible member/session archival and confirmed permanent deletion; workspace-wide behavior policy (`GuildhallBehaviorSettings`); versioned JSON export; **VRAM Residency Tracking** (`/api/ps`) and **Cross-Turn Budgets** (cumulative token and reasoning-effort tracking) in the Context Inspector; and explicit SQL memory notes (`About you` and Member memory, B05/B06).
+- **Done when:** All Phase 1 functional gates and live local-model speed/quality benchmarks (comparing CPU L3-cache/DDR5 execution vs. GPU VRAM offload) pass in the native window.
 - **Record & Tasks:** See [Phase 1 plan](phase%201/phase-1.md), [Phase 1 contracts](phase%201/phase-1-contracts.md), and [Development QC plan](phase%201/development-qc-plan.md).
 
 ### Phase 2: Unified Backing-Engine Abstraction (Cloud Model APIs + CLI Agent Harnesses)
@@ -388,18 +469,18 @@ guildhall/
   - Normalized backing-engine contract supporting both **Pillar 1 Direct Cloud APIs** (Google Gemini API, Anthropic Claude API, OpenAI API) and **Pillar 2 Local CLI Agent Harnesses** (Gemini CLI via `--acp`/`stream-json`, Claude Code CLI, OpenAI Codex CLI, Cursor Agent CLI).
   - Connections UI & OS credential storage (Windows DPAPI / Credential Manager) for API keys and CLI health/auth detection (`Not connected`, `Needs sign-in`, `Connected`, `Unavailable`).
   - Per-member and per-session engine selector allowing any Council Member to switch between Local Ollama, Cloud APIs, and CLI Harnesses while keeping SQL Server as the transcript/memory owner.
-  - Honest per-run usage, timing, and cost/subscription visibility.
+  - Honest per-run and **Cross-Turn Budget** tracking (cumulative token usage, reasoning-effort limits, timing, and cost/subscription visibility).
 - **Done when:** A Council Member can conduct a multi-turn session using local Ollama, switch to a Cloud API or wrapped CLI Harness (starting with Gemini API / Gemini CLI or Claude / OpenAI), and preserve full SQL history, memory injection, and offline fallback when cloud/CLI engines are disabled.
 
 ### Phase 3: Local MCP & External Service Integrations (Pillar 3)
 
-- **Build:** Official MCP C# SDK client in `Guildhall.AgentHost`, local `stdio` MCP server registry and lifecycle management, tool discovery and schema accounting in the Context Inspector, permission policy gate, Run Inspector tool trace UI, first read-only Filesystem/Git MCP tools, and scoped service connectors (GitHub, Google Drive, Gmail).
+- **Build:** Official MCP C# SDK client in `Guildhall.AgentHost`, local `stdio` MCP server registry and lifecycle management, **Tier 5 MCP health checks with auto-retry and graceful degradation**, tool discovery and schema accounting in the Context Inspector, hardcoded backend permission policy gate (strict read-only defaults and anti-exfiltration checks), Run Inspector tool trace UI, first read-only Filesystem/Git MCP tools, and scoped service connectors (GitHub, Google Drive, Gmail).
 - **Done when:** A Council Member (backed by either a Model API or CLI Harness) can invoke an approved read-only tool or service integration within scope, and the user can inspect every request, approval, and result.
 
-### Phase 4: Controlled Coding Workspace, Worktrees, and Enforced Access Modes
+### Phase 4: Controlled Coding Workspace, Worktrees, Rollbacks, and Enforced Access Modes
 
-- **Build:** Local project/repository picker (working offline without GitHub), isolated Git worktree management, host-enforced command sandboxing, native diff preview & review loop in Session Tools, Project-scoped memory notes, and host-enforced access modes (`Always ask`, `Ask for potentially unsafe actions`, `Unrestricted / autopilot`) governing both native MCP tools and wrapped CLI harnesses.
-- **Done when:** A Council Member fixes a failing test in an isolated worktree, runs validation under the selected access policy, presents a reviewable diff inside Guildhall, and merges only after human approval.
+- **Build:** Local project/repository picker (working offline without GitHub), isolated Git worktree management, **Tool Execution Rollbacks** (transactional/compensating rollback mechanisms for failed or rejected tool edits and commands), hardcoded ASP.NET Core command sandboxing and mandatory human-in-the-loop approval gates, native diff preview & review loop in Session Tools, Project-scoped memory notes, and host-enforced access modes (`Always ask`, `Ask for potentially unsafe actions`, `Unrestricted / autopilot`) governing both native MCP tools and wrapped CLI harnesses.
+- **Done when:** A Council Member fixes a failing test in an isolated worktree, recovers or rolls back cleanly from a simulated tool failure, runs validation under the selected access policy, presents a reviewable diff inside Guildhall, and merges only after human approval.
 
 ### Phase 5: Private Infrastructure and SQL Server MCP
 
@@ -408,19 +489,19 @@ guildhall/
 
 ### Phase 6: Durable Background Tasks and Local Scheduled Automations
 
-- **Build:** Independently running background host mode, SQL-backed durable task queue, local cron/schedule manager (`Scheduled tasks` tab) executing Council Member runs under their configured access policy, missed-run/sleep handling, and reconnectable progress streams.
+- **Build:** Independently running background host mode, SQL-backed durable task queue, **5-tier health monitoring and auto-recovery**, local cron/schedule manager (`Scheduled tasks` tab) executing Council Member runs under their configured access policy and cross-turn budgets, missed-run/sleep handling, and reconnectable progress streams.
 - **Done when:** Scheduled automations and long-running tasks execute locally with full audit history, pause/resume controls, and clean recovery across desktop restarts.
 
-### Phase 7: Cross-Member Context Handoff and Multi-Agent Coordination
+### Phase 7: Cross-Member Context Handoff, Delegation Dependency Graphs, and Multi-Agent Coordination
 
 - **Build:**
   - **Conversation Reassignment ("Assign to guild member"):** Interactive handoff/edit mode allowing the user to transfer a conversation or curated context packet (full transcript, reviewed summary, or pinned items) from one Council Member to another across different backing engines.
-  - **Bounded Multi-Agent Delegation:** Child-run protocol, supervisor-to-specialist task delegation, per-agent tool/token budgets, run graph visualization, and cascading cancellation.
-- **Done when:** You can reassign a session across Council Members or let a steward member delegate a bounded task to a specialist (e.g., Architect on Claude/Gemini -> Builder on Codex/Gemini CLI -> Reviewer on Local Ollama) with full provenance and human approval boundaries.
+  - **Bounded Multi-Agent Delegation & Delegation Dependency Graphs:** Child-run protocol, supervisor-to-specialist task delegation, durable **Delegation Dependency Graphs** tracking multi-agent execution dependencies, per-agent tool and **Cross-Turn Budgets**, run graph visualization, and cascading cancellation/rollback propagation.
+- **Done when:** You can reassign a session across Council Members or let a steward member delegate a bounded task graph to specialists (e.g., Architect on Claude/Gemini -> Builder on Codex/Gemini CLI -> Reviewer on Local Ollama) with full dependency graph tracking, provenance, and human approval boundaries.
 
 ### Phase 8: Dedicated Hardware and Advanced Capabilities
 
-- **Consider only with demonstrated need:** Dedicated 24GB+ VRAM home inference server, semantic/vector retrieval over large archives, local voice/speech I/O, and multi-device sync.
+- **Consider only with demonstrated need:** Dedicated 24GB+ VRAM home inference server (overcoming the **Memory Bandwidth Wall** for heavy quantizations and long contexts), multi-model **VRAM Residency Tracking** across hosts, semantic/vector retrieval over large archives, local voice/speech I/O, and multi-device sync.
 - **Done when:** Inference and execution hosts can be relocated via configuration without altering desktop or Council contracts.
 
 ---
@@ -431,7 +512,7 @@ Phase 0 is complete. Active work is strictly bounded to finishing **Phase 1** ([
 
 1. Complete Phase 1 frontend ergonomics (preventing conversation list dimming while typing, balanced transcript padding, collapsible member session accordions, removing redundant filter counts, safe external link opening in the OS browser, copy buttons on terminal command blocks, and adding the disabled `Assign to guild member…` placeholder in the conversation menu).
 2. Reorganize repository scripts into `scripts/{database,startup,sql,misc}` with all references updated and verified, plus a spend-conscious CI test workflow.
-3. Implement reviewed SQL Memory Notes (`About you` and Member scopes, B05/B06) and the Context Inspector.
+3. Implement reviewed SQL Memory Notes (`About you` and Member scopes, B05/B06), bounded RAM preamble memoization (`50–100 MB` `.NET ConcurrentDictionary` + `FileSystemWatcher` hot-reload), and the Context Inspector (including Cross-Turn Budget and VRAM Residency visibility).
 4. Complete the live local-model speed/quality benchmark and native WebView functional QC gate (C16/Q06) before starting Phase 2 (Cloud APIs + CLI Agent Harnesses).
 
 ---
@@ -440,7 +521,7 @@ Phase 0 is complete. Active work is strictly bounded to finishing **Phase 1** ([
 
 - **First Phase 2 integration target:** Which cloud API / CLI harness pair to wire up first in Phase 2 (e.g., **Google Gemini API + Gemini CLI** vs. **Claude API + Claude Code** vs. **OpenAI API + Codex CLI**)?
 - **ACP vs. JSONL per CLI harness:** Which installed CLIs support full bidirectional ACP (`--acp` JSON-RPC 2.0 tool approval callbacks) on Windows vs. requiring one-shot/resumable `--output-format stream-json` with MCP callback bridges? Benchmark each CLI in a bounded Phase 2 spike.
-- **Best local model on the 8 GB RTX 3070:** Finalize after C16/Q06 live speed and quality benchmarks.
+- **Best local model on Ryzen 7 9800X3D (CPU) vs. 8 GB RTX 3070 (GPU):** Finalize after C16/Q06 live speed and quality benchmarks across short turns vs. sustained/long-context workloads.
 - **Host packaging:** Keep launcher-owned processes for development; evaluate Tauri sidecar vs. optional Windows background service at Phase 6.
 
 ---
@@ -449,11 +530,16 @@ Phase 0 is complete. Active work is strictly bounded to finishing **Phase 1** ([
 
 | Risk | Mitigation |
 |---|---|
+| Prompt injection or hallucinated tool authority | Hardcoded ASP.NET Core backend guardrails (strict read-only defaults, anti-exfiltration filters, mandatory human-in-the-loop approval gates) and Tauri/Host OS process isolation; never rely solely on prompts |
 | External CLI agents bypass Guildhall's approval policy or trap history in CLI state | Use ACP / `stream-json`; inject SQL-owned context/memory on each turn; persist all output/diffs to SQL Server; mediate permission flags in `.NET` host |
+| Local daemon crashes, OOM evictions, or post-update restart failures | 5-tier health checks, bounded auto-retry, and graceful degradation across Tauri UI, ASP.NET Core Host, SQL Server, Ollama, and active MCP tool servers |
+| Per-turn SQL/disk bottlenecks for static instructions vs. cache-sync complexity | Memoize compiled Markdown preambles in `.NET ConcurrentDictionary` (`50–100 MB` hard cap) with `FileSystemWatcher` hot-reloading; keep active conversation histories strictly in SQL Server for MVP |
+| Cold-swap latency stalls & Memory Bandwidth Wall on local hardware | Track live model residency in VRAM (`/api/ps`), support bounded warm retention (`0–900s`), use high-cache CPU (e.g., Ryzen 7 9800X3D + DDR5) for short turns, and offload long-context/sustained loads to GPU VRAM |
+| Failed mid-run tool mutations leaving dirty workspace state | Transactional or compensating **Tool Execution Rollbacks** using isolated Git worktree checkpoints |
+| Runaway token consumption or cyclic multi-agent delegation | Enforce **Cross-Turn Budgets** (cumulative tokens & reasoning effort) and track **Delegation Dependency Graphs** (DAGs) in the host |
 | Consumer subscription vs. API billing confusion | Separate Pillar 1 (API keys) and Pillar 2 (CLI subscription logins) clearly in Connections UI and usage reports |
 | Git worktrees mistaken for security sandboxes | Enforce path validation, environment scrubbing, and command allowlists in `Guildhall.AgentHost` |
 | UI coupled to a single model or vendor | Normalized Council Member & Run contracts in `Guildhall.AgentHost` |
-| Local GPU/CPU contention with games | Default to 4-thread CPU mode and `keep_alive: 0`; make GPU offload and warm retention explicit opt-in controls |
 | Secrets exposed to models, child CLIs, or logs | Windows DPAPI storage, scrubbed subprocess environments, and output/export redaction |
 | High token spend during agentic development | Structured `docs/masterplan/phase N/` hierarchy; agents read scoped phase docs before exploring code |
 

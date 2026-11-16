@@ -79,8 +79,8 @@ body{overscroll-behavior:none}
 .conversation-row.is-unread .conversation-card .unread-dot{width:7px;height:7px;background:#88c99b;box-shadow:0 0 0 3px #88c99b20}
 .conversation-row:not(.is-unread) .conversation-card .unread-dot{width:5px;height:5px;background:#776b61;box-shadow:none}
 .conversation-row .conversation-card .unread-dot{flex:0 0 auto}
-.council-group>.conversation-row::before{content:"";position:absolute;left:-10px;top:-6px;bottom:50%;width:9px;border-left:1px solid #695445;border-bottom:1px solid #695445;border-radius:0 0 0 5px;pointer-events:none}
-.council-group>.conversation-row:last-of-type::after{content:"";position:absolute;left:-10px;top:-6px;bottom:-6px;width:1px;background:#695445;pointer-events:none}
+.council-sessions>.conversation-row::before{content:"";position:absolute;left:-10px;top:-6px;bottom:50%;width:9px;border-left:1px solid #695445;border-bottom:1px solid #695445;border-radius:0 0 0 5px;pointer-events:none}
+.council-sessions>.conversation-row:last-of-type::after{content:"";position:absolute;left:-10px;top:-6px;bottom:-6px;width:1px;background:#695445;pointer-events:none}
 
 /* Queue and wait states stay quiet and compact. */
 .queue-panel{display:grid;gap:5px;margin:0 clamp(8px,2.5vw,48px) 6px;min-width:0;max-height:112px;overflow:auto;overscroll-behavior:contain}
@@ -160,7 +160,7 @@ body{overscroll-behavior:none}
 .conversation-sidebar{position:relative}
 .member-panel{position:relative;width:calc(var(--member-width,302px)/var(--ui-scale,1));flex-basis:calc(var(--member-width,302px)/var(--ui-scale,1));max-width:calc((100vw - var(--rail-width) - var(--council-width) - 380px)/var(--ui-scale,1))}
 .preview-pane{position:relative;width:calc(var(--tools-width,520px)/var(--ui-scale,1));flex:0 0 calc(var(--tools-width,520px)/var(--ui-scale,1));max-width:calc((100vw - var(--rail-width) - var(--council-width) - 380px)/var(--ui-scale,1))}
-.pane-resizer{position:absolute;top:0;bottom:0;z-index:20;display:grid;width:28px;place-items:center;padding:0;border:0;border-radius:0;background:transparent;touch-action:none;user-select:none;cursor:col-resize}
+.pane-resizer{position:absolute;top:0;bottom:0;z-index:4;display:grid;width:28px;place-items:center;padding:0;border:0;border-radius:0;background:transparent;touch-action:none;user-select:none;cursor:col-resize}
 .pane-resizer:hover:not(:disabled){background:transparent;border-color:transparent}
 .pane-resizer>span{width:1px;height:100%;background:color-mix(in srgb,var(--brass) 28%,transparent);transition:background .12s,width .12s}
 .pane-resizer:hover>span,.pane-resizer:focus-visible>span{width:2px;background:var(--brass)}
@@ -168,7 +168,7 @@ body{overscroll-behavior:none}
 .council-resizer{right:-14px}
 .right-pane-resizer{left:-14px}
 .member-panel{padding-left:28px}
-.primary-pane{container:chat-pane / inline-size}
+.composer-region{container:chat-pane / inline-size}
 @container chat-pane (max-width:680px){.composer{grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px}.composer textarea{grid-column:1;min-width:0}.composer-toolbar{grid-column:1;width:100%;justify-content:flex-end!important;gap:7px}.composer-spacer{min-width:0}.model-control{min-width:0;max-width:100%}}
 @media(min-width:900px){.workspace,.workspace.sidebar-collapsed{grid-template-columns:calc(var(--rail-width)/var(--ui-scale,1)) calc(var(--council-width,290px)/var(--ui-scale,1)) minmax(0,1fr)}.workspace.sidebar-collapsed{grid-template-columns:calc(var(--rail-width)/var(--ui-scale,1)) 0 minmax(0,1fr)}}
 @media(min-width:1800px){.workspace,.workspace.sidebar-collapsed{grid-template-columns:calc(var(--rail-width)/var(--ui-scale,1)) calc(var(--council-width,310px)/var(--ui-scale,1)) minmax(0,1fr)}.workspace.sidebar-collapsed{grid-template-columns:calc(var(--rail-width)/var(--ui-scale,1)) 0 minmax(0,1fr)}}
@@ -186,3 +186,20 @@ body{overscroll-behavior:none}
 .thinking-pane header{display:flex;align-items:center;justify-content:space-between;gap:12px}.thinking-pane h2{font-size:18px}.thinking-pane header button{min-width:36px;min-height:36px}
 .thinking-content{min-height:0;overflow-y:auto;overflow-x:hidden;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;font-size:13px}
 .thinking-resizer{left:0}.thinking-toggle:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+/* Balanced transcript insets, council accordion, wrapped session menu, instance badge, and code block copy control. */
+.instance-badge{font-size:11px;padding:3px 9px;border:1px solid #59493f;border-radius:999px;background:#261f24;color:#d5be9e;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.message.user{padding-right:27px}
+@media(max-width:1279px){.message.user{padding-right:13px}}
+@media(max-width:899px){.message.user{padding-right:0}.instance-badge{display:none}}
+.council-collapse-toggle{flex:0 0 28px;min-width:28px;min-height:32px;padding:4px;color:#b9a696}
+.council-collapse-toggle svg{transition:transform 150ms ease}
+.council-collapse-toggle.expanded svg{transform:rotate(90deg)}
+.conversation-actions.expanded{flex-wrap:wrap}
+.conversation-actions button{flex:1 1 auto}
+.conversation-actions button:last-child{flex-basis:100%}
+.code-block{position:relative}
+.markdown-body pre{padding:40px 15px 15px}
+.code-copy-button{position:absolute;top:8px;left:8px;display:grid;place-items:center;width:28px;height:28px;padding:4px;border:1px solid #53443a;border-radius:6px;background:#241e22dd;color:#d0bfa8;opacity:.78;transition:opacity 150ms ease,background 150ms ease,border-color 150ms ease}
+.code-block:hover .code-copy-button,.code-copy-button:focus-visible{opacity:1;background:#362c32;border-color:#b99773}
+.blocked-link{color:#b6aaa3;text-decoration:line-through dotted}

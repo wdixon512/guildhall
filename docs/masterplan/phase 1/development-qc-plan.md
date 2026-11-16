@@ -38,11 +38,11 @@ Use a deterministic Ollama-compatible fixture HTTP server as a separate process.
 
 ## Small implementation tasks
 
-### Q01 — Honest status and source identity
+### Q01 — Honest status, cross-worktree session registry, and window/source identity
 
-Scope: launcher/status script, development metadata, runbook. Report absolute checkout, mode, PIDs, ports, source/build identity and dirty state, readiness, and schema state. Keep credentials/session tokens absent. Show a dev-only identity badge so stale embedded assets are obvious. A fixed binary needs a build manifest/hash; a Git SHA alone is insufficient in the currently untracked worktree.
+Scope: launcher/status/stop scripts (`scripts/startup/Start-Dev.ps1`, `Get-DevStatus.ps1`, `Stop-Dev.ps1`, `scripts/misc/Common.ps1`), development metadata, runbook. Register active dev sessions in `%LOCALAPPDATA%\Guildhall\dev\sessions\<sessionId>.json` (in addition to checkout-local `.local/dev-sessions/`) so `Get-DevStatus.ps1` reports all running worktree instances, their window titles, branches, versions, PIDs, ports, source/build identity, dirty state, readiness, and schema state. Keep credentials/session tokens absent. Title each native window and render an in-app header badge with the version tag, branch/worktree name, and port (`Guildhall v0.1.0 [branch | :43120]`) so concurrent instances and stale builds are immediately distinguishable.
 
-Accept: identify a stale build, detect occupied ports without stopping their owner, and distinguish working source from embedded assets. Verify through script output and a native screenshot. The launcher may retain its session token only as a Windows user protected DPAPI value for the status command; never print or expose it in status JSON, URLs, traces, or screenshots, and remove it when the owned session exits.
+Accept: identify a stale build, run multiple worktrees side-by-side via `-AutoPort` (or replace an existing session via `-Replace` / `Stop-Dev.ps1`), detect occupied ports without stopping unverified owners, and distinguish working source from embedded assets. Verify through script output and a native/browser check. The launcher never prints or exposes its session token in status JSON, URLs, traces, or screenshots, and removes session manifests when the owned session exits.
 
 ### Q02 — Prove the rapid development loop
 

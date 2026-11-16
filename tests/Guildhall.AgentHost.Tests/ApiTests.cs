@@ -87,7 +87,7 @@ public sealed class HealthAndLocalAuthTests
         await using var app = new ApiFactory();
         using var client = app.AuthenticatedClient();
         client.DefaultRequestHeaders.Authorization = null;
-        foreach (var method in new[] { "GET", "POST", "PATCH", "DELETE" })
+        foreach (var method in new[] { "GET", "POST", "PATCH", "PUT", "DELETE" })
         {
             using var request = new HttpRequestMessage(HttpMethod.Options, "/conversations/example");
             request.Headers.Add("Origin", "http://127.0.0.1:1420");
@@ -100,11 +100,11 @@ public sealed class HealthAndLocalAuthTests
         }
         using var forbidden = new HttpRequestMessage(HttpMethod.Options, "/conversations/example");
         forbidden.Headers.Add("Origin", "http://127.0.0.1:1420");
-        forbidden.Headers.Add("Access-Control-Request-Method", "PUT");
+        forbidden.Headers.Add("Access-Control-Request-Method", "TRACE");
         var forbiddenResponse = await client.SendAsync(forbidden);
         Assert.Equal(HttpStatusCode.NoContent, forbiddenResponse.StatusCode);
         var allowedMethods = string.Join(',', forbiddenResponse.Headers.GetValues("Access-Control-Allow-Methods"));
-        Assert.DoesNotContain("PUT", allowedMethods, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TRACE", allowedMethods, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/health")).StatusCode);
     }
 

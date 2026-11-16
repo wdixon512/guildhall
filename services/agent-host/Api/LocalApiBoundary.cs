@@ -9,13 +9,14 @@ public static class LocalApiBoundary
     public static void UseLocalBoundary(this WebApplication app, Uri hostUri, string token)
     {
         var expected = SHA256.HashData(Encoding.UTF8.GetBytes("Bearer " + token));
+        var allowedOrigins = LocalConfiguration.AllowedOrigins(app.Configuration["GUILDHALL_FRONTEND_URL"]);
         app.Use(async (context, next) =>
         {
             if (context.Request.Host.Host != hostUri.Host || context.Request.Host.Port != hostUri.Port)
             { context.Response.StatusCode = 400; return; }
 
             var origin = context.Request.Headers.Origin.ToString();
-            if (origin.Length > 0 && !LocalConfiguration.Origins.Contains(origin, StringComparer.Ordinal))
+            if (origin.Length > 0 && !allowedOrigins.Contains(origin, StringComparer.Ordinal))
             { context.Response.StatusCode = 403; return; }
             await next(context);
         });

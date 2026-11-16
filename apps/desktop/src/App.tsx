@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { bootstrap, parseDiscovery, parseReadiness, request, requestBlob } from './api';
 import type { AgentProfile, Bootstrap, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
@@ -6,7 +6,10 @@ import { MessageAttachment } from './MessageAttachment';
 import { StreamingMarkdown } from './StreamingMarkdown';
 import { AssistantResponse } from './AssistantResponse';
 import { splitThinking } from './thinking';
-import { GuildhallBehaviorSettings } from './GuildhallBehaviorSettings';
+
+const GuildhallBehaviorSettings = lazy(() =>
+  import('./GuildhallBehaviorSettings').then(module => ({ default: module.GuildhallBehaviorSettings }))
+);
 
 import { Icon } from './Icon';
 import { PaneResizeHandle } from './PaneResizeHandle';
@@ -84,9 +87,23 @@ export default function App() {
   const [deliveryMode, setDeliveryMode] = useState<'queue' | 'send_now'>('queue');
   const scrolling = useTranscriptScroll(conversation?.conversation.id ?? null, conversation?.messages);
   const transcript = scrolling.transcript;
-  const [draft, setDraft] = useState('');
+  const draftsByKey = useRef<Map<string, { draft: string; selectedFiles: File[]; editingQueuedRunId: string | null }>>((() => {
+    const map = new Map<string, { draft: string; selectedFiles: File[]; editingQueuedRunId: string | null }>();
+    try {
+      const parsed = JSON.parse(localStorage.getItem('guildhall.composerDrafts.v1') ?? 'null');
+      if (parsed && typeof parsed === 'object') {
+        for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof value === 'string' && value) map.set(key, { draft: value, selectedFiles: [], editingQueuedRunId: null });
+        }
+      }
+    } catch { /* Ignore unavailable or malformed localStorage */ }
+    return map;
+  })());
+  const [draft, setDraft] = useState(() => draftsByKey.current.get('new:default')?.draft ?? '');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [editingQueuedRunId, setEditingQueuedRunId] = useState<string | null>(null);
+  const [collapsedMembers, setCollapsedMembers] = useState<Record<string, boolean>>({});
+  const [instanceTag, setInstanceTag] = useState('');
   const filePicker = useRef<HTMLInputElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => {
@@ -188,6 +205,8 @@ export default function App() {
       configuration.current ??= await bootstrap();
       if (controller.signal.aborted) return;
       const config = configuration.current;
+      if (config.windowTitle) document.title = config.windowTitle;
+      if (config.instanceTag) setInstanceTag(config.instanceTag);
       const health = await request(config, '/health', controller.signal);
       if (health === null || typeof health !== 'object' || !('status' in health) || health.status !== 'ok' ||
         !('apiVersion' in health) || health.apiVersion !== 1) throw new Error('Invalid health');
@@ -385,7 +404,12 @@ export default function App() {
       if (controller.signal.aborted) return;
       setProfiles(loaded);
       const firstActive = loaded.find(profile => !profile.isArchived);
-      if (!conversation && !selectedAgentId && firstActive) { setSelectedAgentId(firstActive.id); setIdentity(profileDraftsRef.current[firstActive.id] ?? toMemberIdentity(firstActive)); }
+      if (!conversation && !selectedAgentId && firstActive) {
+        setSelectedAgentId(firstActive.id);
+        setIdentity(profileDraftsRef.current[firstActive.id] ?? toMemberIdentity(firstActive));
+        const savedDraft = draftsByKey.current.get(`new:${firstActive.id}`)?.draft;
+        if (savedDraft) setDraft(current => current || savedDraft);
+      }
     }).catch(() => { if (!controller.signal.aborted) setProfileError('Could not load guild members. Check the approved database update and refresh.'); });
     return () => controller.abort();
   }, [database?.status]);
@@ -451,12 +475,58 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [profileDrafts, profiles, database?.status, profileRetryById, profileSavingId]);
 
+  const draftContextKey = (convId: string | null | undefined, agentId: string | null | undefined) =>
+    convId ? `chat:${convId}` : `new:${agentId ?? 'default'}`;
+
+  const syncPersistedDrafts = () => {
+    try {
+      const persisted: Record<string, string> = {};
+      for (const [key, entry] of draftsByKey.current.entries()) {
+        if (entry.draft) persisted[key] = entry.draft;
+      }
+      if (Object.keys(persisted).length > 0) localStorage.setItem('guildhall.composerDrafts.v1', JSON.stringify(persisted));
+      else localStorage.removeItem('guildhall.composerDrafts.v1');
+    } catch { /* Ignore storage quota or private mode errors */ }
+  };
+
+  const currentDraftKey = draftContextKey(conversation?.conversation.id, activeAgentId);
+  useEffect(() => {
+    const existing = draftsByKey.current.get(currentDraftKey);
+    if (draft || (existing?.selectedFiles.length ?? 0) > 0 || (existing?.editingQueuedRunId ?? null) !== null) {
+      draftsByKey.current.set(currentDraftKey, {
+        draft,
+        selectedFiles: existing?.selectedFiles ?? selectedFiles,
+        editingQueuedRunId: existing?.editingQueuedRunId ?? editingQueuedRunId,
+      });
+    } else {
+      draftsByKey.current.delete(currentDraftKey);
+    }
+    syncPersistedDrafts();
+  }, [draft, currentDraftKey]);
+
+  function switchComposerContext(nextConvId: string | null | undefined, nextAgentId: string | null | undefined) {
+    const currentKey = draftContextKey(conversation?.conversation.id, activeAgentId);
+    const nextKey = draftContextKey(nextConvId, nextAgentId);
+    if (currentKey === nextKey) return;
+    if (draft || selectedFiles.length > 0 || editingQueuedRunId !== null) {
+      draftsByKey.current.set(currentKey, { draft, selectedFiles, editingQueuedRunId });
+    } else {
+      draftsByKey.current.delete(currentKey);
+    }
+    syncPersistedDrafts();
+    const restored = draftsByKey.current.get(nextKey);
+    setDraft(restored?.draft ?? '');
+    setSelectedFiles(restored?.selectedFiles ?? []);
+    setEditingQueuedRunId(restored?.editingQueuedRunId ?? null);
+  }
+
   async function openSavedChat(id: string) {
-    if (!configuration.current || chatOperation.current || hasDraft) return;
+    if (!configuration.current || chatOperation.current) return;
     if (database?.status !== 'ready') { setChatError('The local database needs its approved update before this chat can open.'); return; }
     chatOperation.current = true; setChatBusy(true); setChatError('');
     try {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
+      switchComposerContext(id, details.agent?.id ?? activeAgentId);
       setConversation(details); setChosenModel(details.conversation.selectedModelId ?? '');
       markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
@@ -486,8 +556,10 @@ export default function App() {
     chatOperation.current = true; setChatBusy(true); setDeleteError('');
     try {
       await request(configuration.current, `/conversations/${deleteTarget.id}`, new AbortController().signal, { method: 'DELETE' });
+      draftsByKey.current.delete(draftContextKey(deleteTarget.id, activeAgentId));
+      syncPersistedDrafts();
       setHistory(items => items.filter(row => row.id !== deleteTarget.id));
-      if (conversation?.conversation.id === deleteTarget.id) setConversation(null);
+      if (conversation?.conversation.id === deleteTarget.id) { switchComposerContext(null, activeAgentId); setConversation(null); }
       setDeleteTarget(null);
     } catch { setDeleteError('Could not delete this conversation. It may have an active response; refresh and try again when it has finished.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
@@ -587,6 +659,7 @@ export default function App() {
     chatOperation.current = true; setChatBusy(true); setProfileError('');
     try {
       const profile = await request(configuration.current, '/agents', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New guild member', role: 'Steward', portraitId: 0, customPortrait: null, accent: '#71465f', instructions: 'You are a helpful local assistant.', defaultModelId: chosenModel || null }) }) as AgentProfile;
+      switchComposerContext(null, profile.id);
       setProfiles(items => [...items, profile]); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setConversation(null); setChosenModel(profile.defaultModelId ?? chosenModel); setShowMember(true);
     } catch { setProfileError('Could not add a guild member. Check the local database permissions.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
@@ -612,7 +685,7 @@ export default function App() {
   }
 
   async function deleteGuildMember(profile: AgentProfile) {
-    if (!configuration.current || chatOperation.current || hasDraft || profileHasPendingChanges(profile.id)) return;
+    if (!configuration.current || chatOperation.current || profileHasPendingChanges(profile.id)) return;
     chatOperation.current = true; setChatBusy(true); setDeleteMemberError('');
     try {
       await request(configuration.current, `/agents/${profile.id}?expectedRevision=${profile.revision}`, new AbortController().signal, { method: 'DELETE' });
@@ -631,7 +704,7 @@ export default function App() {
   }
 
   async function openChat(createNew = false, agentDefinitionId = activeAgentId) {
-    if (!configuration.current || chatOperation.current || hasDraft) return;
+    if (!configuration.current || chatOperation.current) return;
     const selectedProfile = profiles.find(profile => profile.id === agentDefinitionId);
     if (createNew && (!selectedProfile || selectedProfile.isArchived)) { setChatError('Choose or restore an active guild member before starting a new session.'); return; }
     chatOperation.current = true; setChatBusy(true);
@@ -641,6 +714,7 @@ export default function App() {
       if (!list.length && (!selectedProfile || selectedProfile.isArchived)) { setChatError('Choose or restore an active guild member before starting a new session.'); return; }
       const item = list[0] ?? await request(configuration.current, '/conversations', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New conversation', modelId: selectedProfile?.defaultModelId || chosenModel || null, agentDefinitionId }) }) as Conversation;
       const details = await request(configuration.current, `/conversations/${item.id}`, new AbortController().signal) as ConversationDetails;
+      switchComposerContext(details.conversation.id, details.agent?.id ?? agentDefinitionId);
       setConversation(details);
       setChosenModel(details.conversation.selectedModelId ?? '');
        if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
@@ -676,6 +750,7 @@ export default function App() {
           body: JSON.stringify({ title: 'New conversation', modelId, agentDefinitionId: activeAgentId }),
         }) as Conversation;
         target = await request(configuration.current, `/conversations/${created.id}`, new AbortController().signal) as ConversationDetails;
+        draftsByKey.current.delete(draftContextKey(null, activeAgentId));
         setConversation(target);
          if (target.agent) { setSelectedAgentId(target.agent.id); setIdentity(identityForProfile(target.agent)); }
         setHistory(items => [created, ...items.filter(item => item.id !== created.id)]);
@@ -785,24 +860,28 @@ export default function App() {
     const title = item.title === 'New conversation' ? `Conversation ${history.length - index}` : item.title;
     const activeRun = !!item.hasActiveRun || (conversation?.conversation.id === item.id && running);
     const unread = isUnread(item.lastResponseUtc, readState[item.id]);
-    return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} key={item.id}>
-      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || hasDraft || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
+    return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} key={item.id} onContextMenu={event => { event.preventDefault(); setConversationMenu(item.id); }}>
+      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
       <button className="conversation-menu-toggle icon-button" aria-label={`Actions for ${title}`} aria-expanded={conversationMenu === item.id} onClick={() => setConversationMenu(current => current === item.id ? null : item.id)}>···</button>
       <div className={`conversation-actions ${conversationMenu === item.id ? 'expanded' : ''}`}>
-        <button aria-label={`Rename ${title}`} title="Rename conversation" disabled={chatBusy || hasDraft} onClick={() => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}><Icon name="edit" size={16} /><span>Rename</span></button>
-        <button aria-label={`${item.isArchived ? 'Restore' : 'Archive'} ${title}`} title={activeRun ? 'Wait for the response to finish' : item.isArchived ? 'Restore conversation' : 'Archive conversation'} disabled={chatBusy || hasDraft || activeRun} onClick={() => void archiveConversation(item)}>{item.isArchived ? '↩' : <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 4.5h14l-1 3H4l-1-3Zm1.5 4.5v7h11V9M10 10v4m0 0-2-2m2 2 2-2" /></svg>}<span>{item.isArchived ? 'Restore' : 'Archive'}</span></button>
-        <button aria-label={`Delete ${title}`} title={activeRun ? 'Wait for the response to finish' : 'Permanently delete conversation'} disabled={chatBusy || hasDraft || activeRun} onClick={() => { setDeleteError(''); setDeleteTarget(item); }}><Icon name="trash" size={16} /><span>Delete</span></button>
+        <button aria-label={`Rename ${title}`} title="Rename conversation" disabled={chatBusy} onClick={() => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}><Icon name="edit" size={16} /><span>Rename</span></button>
+        <button aria-label={`${item.isArchived ? 'Restore' : 'Archive'} ${title}`} title={activeRun ? 'Wait for the response to finish' : item.isArchived ? 'Restore conversation' : 'Archive conversation'} disabled={chatBusy || activeRun} onClick={() => void archiveConversation(item)}>{item.isArchived ? '↩' : <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 4.5h14l-1 3H4l-1-3Zm1.5 4.5v7h11V9M10 10v4m0 0-2-2m2 2 2-2" /></svg>}<span>{item.isArchived ? 'Restore' : 'Archive'}</span></button>
+        <button aria-label={`Delete ${title}`} title={activeRun ? 'Wait for the response to finish' : 'Permanently delete conversation'} disabled={chatBusy || activeRun} onClick={() => { setDeleteError(''); setDeleteTarget(item); }}><Icon name="trash" size={16} /><span>Delete</span></button>
+        <button type="button" aria-label={`Assign ${title} to guild member — planned`} title="Assign to guild member — planned for Phase 7" disabled><Icon name="council" size={16} /><span>Assign to guild member…</span></button>
       </div>
     </div>;
   };
 
-  const renderMember = ({ profile, sessions }: { profile: AgentProfile; sessions: Conversation[] }) => <section className={`council-group ${activeAgentId === profile.id ? 'active' : ''}`} key={profile.id}>
+  const renderMember = ({ profile, sessions }: { profile: AgentProfile; sessions: Conversation[] }) => {
+    const isCollapsed = !!collapsedMembers[profile.id] && !search.trim();
+    return <section className={`council-group ${activeAgentId === profile.id ? 'active' : ''}`} key={profile.id}>
     <div className="council-group-heading" data-member-menu={memberMenuId === profile.id ? '' : undefined} onContextMenu={event => { event.preventDefault(); memberReturnFocus.current = document.getElementById(`member-actions-${profile.id}`); setMemberMenuId(profile.id); }} onKeyDown={event => {
       if (event.key === 'Escape' && memberMenuId === profile.id) { event.preventDefault(); event.stopPropagation(); setMemberMenuId(null); memberReturnFocus.current?.focus(); }
       if (event.key === 'Tab') setMemberMenuId(null);
     }}>
-      <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy || hasDraft} onClick={() => { setConversation(null); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
-      {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || hasDraft || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
+      <button type="button" className={`icon-button council-collapse-toggle ${isCollapsed ? '' : 'expanded'}`} aria-expanded={!isCollapsed} aria-controls={`member-sessions-${profile.id}`} aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.name} sessions`} title={`${isCollapsed ? 'Expand' : 'Collapse'} sessions`} onClick={() => setCollapsedMembers(current => ({ ...current, [profile.id]: !isCollapsed }))}><Icon name="chevron" size={14} /></button>
+      <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy} onClick={() => { switchComposerContext(null, profile.id); setConversation(null); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
+      {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
       <button id={`member-actions-${profile.id}`} className="icon-button member-menu-toggle" aria-label={`Member actions for ${profile.name}`} aria-haspopup="menu" aria-expanded={memberMenuId === profile.id} aria-controls={memberMenuId === profile.id ? `member-menu-${profile.id}` : undefined} onClick={event => { memberReturnFocus.current = event.currentTarget; setMemberMenuId(value => value === profile.id ? null : profile.id); }}>···</button>
       {memberMenuId === profile.id && createPortal(<div ref={memberMenuElement} data-member-menu="" style={memberMenuPosition ?? undefined} className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`} onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); setMemberMenuId(null); memberReturnFocus.current?.focus(); return; }
@@ -825,18 +904,21 @@ export default function App() {
           actions[next]?.focus();
         }
       }}>
-        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || hasDraft || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
-        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || hasDraft || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
+        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
+        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
       </div>, document.body)}
     </div>
-    {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
-    {!sessions.length && <p className="council-no-sessions">{search ? 'No matching sessions.' : showArchived ? 'No archived sessions.' : 'No sessions yet.'}</p>}
+    {!isCollapsed && <div id={`member-sessions-${profile.id}`} className="council-sessions">
+      {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
+      {!sessions.length && <p className="council-no-sessions">{search ? 'No matching sessions.' : showArchived ? 'No archived sessions.' : 'No sessions yet.'}</p>}
+    </div>}
   </section>;
+  };
 
   return <main className={`workspace ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--accent': identity.accent, '--rail-width': `${railWidth}px`, '--council-width': `${effectiveCouncilWidth}px`, '--member-width': `${Math.min(memberPaneWidth, rightPaneResizeMax)}px`, '--tools-width': `${Math.min(toolsPaneWidth, rightPaneResizeMax)}px`, '--right-pane-width': `${viewportWidth > 1279 ? Math.min(rightPaneWidth, rightPaneResizeMax) : 0}px` } as CSSProperties}>
     <header className="app-bar">
       <div className="wordmark"><Icon name="gate" size={34} /><span>Guildhall</span></div>
-      <span className="app-bar-divider" /><span className="workspace-title">Personal council</span>
+      <span className="app-bar-divider" /><span className="workspace-title">Personal council</span>{instanceTag && <span className="instance-badge" aria-label={`Instance ${instanceTag}`} title={configuration.current?.windowTitle || instanceTag}>{instanceTag}</span>}
       <button className="sidebar-toggle icon-button" aria-label={sidebarCollapsed ? 'Expand chats sidebar' : 'Collapse chats sidebar'} title="Toggle chats sidebar" onClick={() => setSidebarCollapsed(value => !value)}><Icon name="panel" /></button>
       <span className="app-bar-spacer" /><button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { setShowSettings(false); setShowConnections(!showConnections); }} aria-expanded={showConnections}><span className={`dot ${host === 'Connected' ? '' : 'offline'}`} /><Icon name="connections" size={17} /><span>Connections</span></button>
       <button className="member-toggle" aria-label="Customize guild member" aria-expanded={showMember} onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}><Portrait identity={identity} /><span>{memberName}</span></button>
@@ -848,8 +930,8 @@ export default function App() {
       <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="clock" size={25} /></button>
       <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="shield" size={25} /></button><span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
     </nav>
-    <aside id="council-pane" className="conversation-sidebar" aria-label="Council and sessions"><div className="sidebar-top"><h1>Your council</h1><label className="search-box"><Icon name="search" /><input aria-label="Search loaded conversations" placeholder="Search chats…" value={search} onChange={event => setSearch(event.target.value)} /></label><button className="new-chat" onClick={() => void openChat(true)} disabled={chatBusy || hasDraft || profileDirty || profileSaving || !chosenModel || !activeProfile || activeProfile.isArchived || database?.status !== 'ready'}><Icon name="plus" /> New session</button><button className="add-member" onClick={() => void addGuildMember()} disabled={chatBusy || profileDirty || profileSaving || database?.status !== 'ready'}><Icon name="council" size={17} /> Add guild member</button></div>
-      <div className="conversation-filter" role="group" aria-label="Conversation list filter"><button className={!showArchived ? 'active' : ''} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>Chats</button><button className={showArchived ? 'active' : ''} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>Archived</button><span className="filter-count" aria-label={`${visibleHistory.length} conversations shown`}><strong>{visibleHistory.length}</strong><small>shown</small></span></div>
+    <aside id="council-pane" className="conversation-sidebar" aria-label="Council and sessions"><div className="sidebar-top"><h1>Your council</h1><label className="search-box"><Icon name="search" /><input aria-label="Search loaded conversations" placeholder="Search chats…" value={search} onChange={event => setSearch(event.target.value)} /></label><button className="new-chat" onClick={() => void openChat(true)} disabled={chatBusy || profileDirty || profileSaving || !chosenModel || !activeProfile || activeProfile.isArchived || database?.status !== 'ready'}><Icon name="plus" /> New session</button><button className="add-member" onClick={() => void addGuildMember()} disabled={chatBusy || profileDirty || profileSaving || database?.status !== 'ready'}><Icon name="council" size={17} /> Add guild member</button></div>
+      <div className="conversation-filter" role="group" aria-label="Conversation list filter"><button className={!showArchived ? 'active' : ''} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>Chats</button><button className={showArchived ? 'active' : ''} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>Archived</button></div>
       <div className="conversation-list">{profileGroups.map(renderMember)}
         <button className="archived-members-toggle" aria-expanded={showArchivedMembers} aria-controls="archived-members" onClick={() => setShowArchivedMembers(value => !value)}>{showArchivedMembers ? '▾' : '▸'} Archived members ({archivedProfileGroups.length})</button>
         {showArchivedMembers && <div id="archived-members">{archivedProfileGroups.map(renderMember)}{!archivedProfileGroups.length && <p className="sidebar-empty">No archived members.</p>}</div>}
@@ -867,7 +949,7 @@ export default function App() {
       <article><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
       <article><h3>Local models</h3><p>{modelLabel}</p>{models?.status === 'available' && <ul>{models.models.map(model => <li key={model.id}>{model.displayName}</li>)}</ul>}<small>Discovered through the agent host</small></article>
     </section><section className="connection-catalog" aria-label="Provider connections preview"><div><h3>Provider connections</h3><small>Planned providers · sign-in is not connected</small></div><div className="provider-grid">{futureConnections.map(name => <article key={name}><span>{name}</span><button disabled title={`${name} connection is not implemented yet`}>Planned</button></article>)}</div></section></aside>}
-    {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><GuildhallBehaviorSettings config={configuration.current} /><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>No provider usage data is connected.</small></div><p>Local model usage and provider-reported costs will appear here when available. Guildhall will label estimates and will not invent spending totals.</p></section></aside>}
+    {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading behavior settings…</small></section>}><GuildhallBehaviorSettings config={configuration.current} /></Suspense><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>No provider usage data is connected.</small></div><p>Local model usage and provider-reported costs will appear here when available. Guildhall will label estimates and will not invent spending totals.</p></section></aside>}
     <section className="chat" aria-label="Local chat">
       <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => { setShowMember(false); if (!showPreview && window.innerWidth < 900) setSidebarCollapsed(true); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
       <div className="messages" ref={transcript} tabIndex={0} aria-label="Messages" onScroll={scrolling.onScroll} onWheel={scrolling.onWheel} onKeyDown={scrolling.onKeyDown}><div className="transcript-content" ref={scrolling.content}>
@@ -889,7 +971,7 @@ export default function App() {
           {models?.models.map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
         </select>
       </label><span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
-      <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line · Clear your draft to change chats' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
+      <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
     </section></div>
     {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }} onChange={updateMemberIdentity} onClose={() => setShowMember(false)} storageError={profileErrorForActive || storageError} saving={profileSaving} onRetrySave={() => { if (!activeProfile) return; const profileId = activeProfile.id; setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; }); setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 })); }} retryAvailable={profileDirty && !!profileErrorForActive} />}
     {toolsPanel.present && <aside id="session-tools-pane" className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools"><PaneResizeHandle className="right-pane-resizer tools-resizer" label="Resize Session Tools pane" controls="session-tools-pane" value={Math.min(toolsPaneWidth, rightPaneResizeMax)} min={240} max={rightPaneResizeMax} direction={-1} onResize={setToolsPaneWidth} /><div className="pane-header"><span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span><button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button></div><div className="session-tabs" role="group" aria-label="Session tools">{sessionTabs.map(tab => <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>{tab.label}<small>{tab.status}</small></button>)}</div><section key={previewTab} className="session-placeholder"><span className="session-placeholder-icon">{previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'context' ? '◉' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}</span><span className="eyebrow">{activeSessionPanel.title}</span><p>{activeSessionPanel.detail}</p><small>Preview only · This panel does not run commands or connect external services.</small></section></aside>}

@@ -1,11 +1,24 @@
 using System.Net;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Guildhall.AgentHost.Configuration;
+
+internal sealed class Lazier<T>(IServiceProvider provider)
+    : Lazy<T>(provider.GetRequiredService<T>, LazyThreadSafetyMode.ExecutionAndPublication)
+    where T : class;
 
 public static class LocalConfiguration
 {
     public static readonly string[] Origins = ["http://127.0.0.1:1420", "http://tauri.localhost", "tauri://localhost"];
+
+    public static string[] AllowedOrigins(string? frontendUrl = null)
+    {
+        if (string.IsNullOrWhiteSpace(frontendUrl)) return Origins;
+        var uri = LoopbackUri(frontendUrl);
+        var origin = $"http://{uri.Host}:{uri.Port}";
+        return Origins.Contains(origin, StringComparer.Ordinal) ? Origins : [.. Origins, origin];
+    }
 
     public static Uri LoopbackUri(string value)
     {
