@@ -9,6 +9,7 @@ import { usePanelPresence } from './usePanelPresence';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import { CouncilMember, Portrait, useMemberIdentity } from './CouncilMember';
 import type { MemberIdentity } from './CouncilMember';
+import { formatResponseDuration, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions } from './chatPresentation';
 import type { CSSProperties } from 'react';
 import './style.css';
 
@@ -42,7 +43,7 @@ export default function App() {
   const memberName = identity.name.trim() || 'Maren';
   useEffect(() => {
     const dismiss = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !document.querySelector('[data-member-menu], [aria-labelledby="archive-member-title"]')) {
+      if (event.key === 'Escape' && !document.querySelector('[data-member-menu], [aria-labelledby="archive-member-title"], [aria-labelledby="delete-member-title"]')) {
         setShowMember(false); setShowPreview(false); setShowSettings(false); setShowConnections(false); setConversationMenu(null); setMemberMenuId(null);
         if (window.innerWidth < 900) setSidebarCollapsed(true);
       }
@@ -83,6 +84,8 @@ export default function App() {
   const [chatError, setChatError] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [history, setHistory] = useState<Conversation[]>([]);
+  const anyKnownPendingWork = hasPendingWork || history.some(item => item.hasActiveRun);
+  const [readState, setReadState] = useState(() => readWatermarks());
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -92,6 +95,9 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
   const [archiveMemberTarget, setArchiveMemberTarget] = useState<AgentProfile | null>(null);
+  const [deleteMemberTarget, setDeleteMemberTarget] = useState<AgentProfile | null>(null);
+  const [deleteMemberError, setDeleteMemberError] = useState('');
+  const deleteMemberCancel = useRef<HTMLButtonElement | null>(null);
   const archiveMemberDialog = useRef<HTMLElement | null>(null);
   const memberMenuAction = useRef<HTMLButtonElement | null>(null);
   const memberReturnFocus = useRef<HTMLElement | null>(null);
@@ -205,6 +211,21 @@ export default function App() {
   }, [archiveMemberTarget]);
 
   useEffect(() => {
+    if (!deleteMemberTarget) return;
+    deleteMemberCancel.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !chatBusy) { event.preventDefault(); setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); return; }
+      if (event.key !== 'Tab') return;
+      const buttons = document.querySelectorAll<HTMLButtonElement>('[aria-labelledby="delete-member-title"] button:not(:disabled)');
+      if (!buttons.length) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons[buttons.length - 1].focus(); }
+      else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) { event.preventDefault(); buttons[0].focus(); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [deleteMemberTarget, chatBusy]);
+
+  useEffect(() => {
     if (!deleteTarget) return;
     cancelDeleteButton.current?.focus();
     const keepDialogFocus = (event: KeyboardEvent) => {
@@ -228,6 +249,26 @@ export default function App() {
     }).catch(() => {});
     return () => controller.abort();
   }, [database?.status, conversation?.conversation.id, showArchived]);
+
+  useEffect(() => {
+    if (database?.status !== 'ready' || !configuration.current) return;
+    let stopped = false;
+    const refreshSummaries = async () => {
+      try {
+        const value = await request(configuration.current!, `/conversations?limit=25&archived=${showArchived}`, new AbortController().signal);
+        if (!stopped && Array.isArray(value)) setHistory(value as Conversation[]);
+      } catch { /* Keep the last committed list during a temporary connection issue. */ }
+    };
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshSummaries();
+      const selected = conversation?.conversation;
+      if (selected?.id && selected.lastResponseUtc) { markConversationRead(selected.id, selected.lastResponseUtc); setReadState(readWatermarks()); }
+    };
+    const timer = anyKnownPendingWork ? window.setInterval(() => void refreshSummaries(), 3000) : undefined;
+    window.addEventListener('focus', onFocus); document.addEventListener('visibilitychange', onFocus);
+    return () => { stopped = true; if (timer) window.clearInterval(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); };
+  }, [database?.status, showArchived, anyKnownPendingWork, conversation?.conversation.id, conversation?.conversation.lastResponseUtc]);
 
   useEffect(() => {
     const config = configuration.current;
@@ -288,6 +329,7 @@ export default function App() {
     try {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
       setConversation(details); setChosenModel(details.conversation.selectedModelId ?? '');
+      markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(toMemberIdentity(details.agent)); }
       setConversationMenu(null);
       if (window.innerWidth < 900) setSidebarCollapsed(true);
@@ -361,6 +403,17 @@ export default function App() {
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
+  async function promoteQueuedMessage(runId?: string) {
+    if (!configuration.current || !conversation || !runId || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      await request(configuration.current, `/runs/${runId}/promote`, new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedConversationRevision: conversation.conversation.revision }) });
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      setConversation(updated); setHistory(items => items.map(item => item.id === updated.conversation.id ? updated.conversation : item));
+    } catch { setChatError('Could not send this queued message now. Refresh the conversation and try again.'); }
+    finally { chatOperation.current = false; setChatBusy(false); }
+  }
+
   useEffect(() => {
     const conversationId = conversation?.conversation?.id;
     if (!conversationId || !configuration.current || !hasPendingWork) return;
@@ -374,6 +427,9 @@ export default function App() {
         const latest = await request(configuration.current!, `/conversations/${conversationId}`, controller.signal) as ConversationDetails;
         if (!stopped) {
           setConversation(current => current?.conversation.id === conversationId && latest.conversation.revision >= current.conversation.revision ? latest : current);
+          if (document.visibilityState === 'visible' && latest.conversation.lastResponseUtc) {
+            markConversationRead(conversationId, latest.conversation.lastResponseUtc); setReadState(readWatermarks());
+          }
           setHistory(items => items.map(item => item.id === conversationId && latest.conversation.revision >= item.revision ? latest.conversation : item));
         }
       } catch { if (!stopped) setChatError('Could not refresh this response. Try opening the conversation again.'); }
@@ -409,6 +465,25 @@ export default function App() {
         if (nextProfile) { setIdentity(toMemberIdentity(nextProfile)); setChosenModel(nextProfile.defaultModelId ?? chosenModel); }
       }
     } catch { setArchiveMemberError('Could not update this guild member. Wait for running or queued replies to finish, then try again. If this member changed elsewhere, reopen Guildhall.'); }
+    finally { chatOperation.current = false; setChatBusy(false); }
+  }
+
+  async function deleteGuildMember(profile: AgentProfile) {
+    if (!configuration.current || chatOperation.current || hasDraft || profileDirty || profileSaving) return;
+    chatOperation.current = true; setChatBusy(true); setDeleteMemberError('');
+    try {
+      await request(configuration.current, `/agents/${profile.id}?expectedRevision=${profile.revision}`, new AbortController().signal, { method: 'DELETE' });
+      setProfiles(items => items.filter(item => item.id !== profile.id));
+      setHistory(items => items.filter(item => item.agentDefinitionId !== profile.id));
+      if (conversation?.agent?.id === profile.id) { setConversation(null); setChosenModel(''); }
+      const next = profiles.find(item => item.id !== profile.id && !item.isArchived);
+      if (selectedAgentId === profile.id || conversation?.agent?.id === profile.id) {
+        setSelectedAgentId(next?.id ?? null);
+        if (next) { setIdentity(toMemberIdentity(next)); setChosenModel(next.defaultModelId ?? chosenModel); }
+      }
+      setMemberMenuId(null); setDeleteMemberTarget(null);
+      requestAnimationFrame(() => document.getElementById(`member-actions-${next?.id ?? ''}`)?.focus());
+    } catch { setDeleteMemberError('Could not delete this member. Make sure its replies have finished, then refresh and try again.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
@@ -544,14 +619,16 @@ export default function App() {
   };
   const activeSessionPanel = sessionPanelText[previewTab];
   const visibleHistory = history.filter(item => item.title.toLowerCase().includes(search.toLowerCase()));
+  const queuedTurns = queuedPairs(conversation?.messages ?? []);
+  const queuedMessages = (conversation?.messages ?? []).filter(message => message.role === 'assistant' && message.status === 'Queued');
   const profileGroups = profiles.filter(profile => !profile.isArchived).map(profile => ({ profile, sessions: visibleHistory.filter(item => item.agentDefinitionId === profile.id) }));
   const archivedProfileGroups = profiles.filter(profile => profile.isArchived).map(profile => ({ profile, sessions: visibleHistory.filter(item => item.agentDefinitionId === profile.id) }));
   const renderSession = (item: Conversation, index: number) => {
     const title = item.title === 'New conversation' ? `Conversation ${history.length - index}` : item.title;
     const activeRun = !!item.hasActiveRun || (conversation?.conversation.id === item.id && running);
-    const profile = profiles.find(candidate => candidate.id === item.agentDefinitionId);
-    return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''}`} key={item.id}>
-      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Portrait identity={profile ? toMemberIdentity(profile) : identity} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span><span className={`dot ${activeRun ? 'offline' : ''}`} title={activeRun ? 'Response active' : 'Saved locally'} /></button>
+    const unread = isUnread(item.lastResponseUtc, readState[item.id]);
+    return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} key={item.id}>
+      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
       <button className="conversation-menu-toggle icon-button" aria-label={`Actions for ${title}`} aria-expanded={conversationMenu === item.id} onClick={() => setConversationMenu(current => current === item.id ? null : item.id)}>···</button>
       <div className={`conversation-actions ${conversationMenu === item.id ? 'expanded' : ''}`}>
         <button aria-label={`Rename ${title}`} title="Rename conversation" disabled={chatBusy || hasDraft} onClick={() => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}><Icon name="edit" size={16} /><span>Rename</span></button>
@@ -565,13 +642,21 @@ export default function App() {
     <div className="council-group-heading" data-member-menu={memberMenuId === profile.id ? '' : undefined} onContextMenu={event => { event.preventDefault(); memberReturnFocus.current = document.getElementById(`member-actions-${profile.id}`); setMemberMenuId(profile.id); }} onKeyDown={event => {
       if (event.key === 'Escape' && memberMenuId === profile.id) { event.preventDefault(); event.stopPropagation(); setMemberMenuId(null); memberReturnFocus.current?.focus(); }
       if (event.key === 'Tab') setMemberMenuId(null);
-      if (memberMenuId === profile.id && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); memberMenuAction.current?.focus(); }
+      if (memberMenuId === profile.id && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const actions = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+        if (!actions.length) return;
+        const current = actions.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? actions.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + actions.length) % actions.length;
+        actions[next]?.focus();
+      }
     }}>
       <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy || hasDraft || profileDirty || profileSaving} onClick={() => { setConversation(null); setSelectedAgentId(profile.id); setIdentity(toMemberIdentity(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
       {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || hasDraft || profileDirty || profileSaving || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
       <button id={`member-actions-${profile.id}`} className="icon-button member-menu-toggle" aria-label={`Member actions for ${profile.name}`} aria-haspopup="menu" aria-expanded={memberMenuId === profile.id} aria-controls={memberMenuId === profile.id ? `member-menu-${profile.id}` : undefined} onClick={event => { memberReturnFocus.current = event.currentTarget; setMemberMenuId(value => value === profile.id ? null : profile.id); }}>···</button>
       {memberMenuId === profile.id && <div className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`}>
         <button ref={memberMenuAction} role="menuitem" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}>{profile.isArchived ? 'Restore member' : 'Archive member'}</button>
+        <button role="menuitem" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}>Delete member and sessions</button>
       </div>}
     </div>
     {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
@@ -590,8 +675,8 @@ export default function App() {
       <button className="rail-active" aria-label="Chats" title="Chats" onClick={() => { setShowConnections(false); setShowSettings(false); }}><Icon name="chat" size={25} /></button>
       <button aria-label="Guild member appearance" title="Guild member" onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth <= 480) setSidebarCollapsed(true); setShowMember(value => !value); }}><Icon name="council" size={25} /></button>
       <button disabled title="Projects — planned" aria-label="Projects — planned"><Icon name="folder" size={25} /></button>
-      <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="spark" size={25} /></button>
-      <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="settings" size={25} /></button><span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
+      <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="clock" size={25} /></button>
+      <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="shield" size={25} /></button><span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
     </nav>
     <aside className="conversation-sidebar" aria-label="Council and sessions"><div className="sidebar-top"><h1>Your council</h1><label className="search-box"><Icon name="search" /><input aria-label="Search loaded conversations" placeholder="Search chats…" value={search} onChange={event => setSearch(event.target.value)} /></label><button className="new-chat" onClick={() => void openChat(true)} disabled={chatBusy || hasDraft || profileDirty || profileSaving || !chosenModel || !activeProfile || activeProfile.isArchived || database?.status !== 'ready'}><Icon name="plus" /> New session</button><button className="add-member" onClick={() => void addGuildMember()} disabled={chatBusy || profileDirty || profileSaving || database?.status !== 'ready'}><Icon name="council" size={17} /> Add guild member</button></div>
       <div className="conversation-filter" role="group" aria-label="Conversation list filter"><button className={!showArchived ? 'active' : ''} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>Chats</button><button className={showArchived ? 'active' : ''} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>Archived</button><span className="filter-count" aria-label={`${visibleHistory.length} conversations shown`}><strong>{visibleHistory.length}</strong><small>shown</small></span></div>
@@ -613,12 +698,16 @@ export default function App() {
     </section><section className="connection-catalog" aria-label="Provider connections preview"><div><h3>Provider connections</h3><small>Planned providers · sign-in is not connected</small></div><div className="provider-grid">{futureConnections.map(name => <article key={name}><span>{name}</span><button disabled title={`${name} connection is not implemented yet`}>Planned</button></article>)}</div></section></aside>}
     {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>No provider usage data is connected.</small></div><p>Local model usage and provider-reported costs will appear here when available. Guildhall will label estimates and will not invent spending totals.</p></section></aside>}
     <section className="chat" aria-label="Local chat">
-      <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => void openChat()} disabled={host !== 'Connected' || chatBusy || hasDraft}>Open chat</button><button onClick={() => { setShowMember(false); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
+      <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => { setShowMember(false); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
       <div className="messages" ref={transcript} tabIndex={0} aria-label="Messages" onScroll={scrolling.onScroll} onWheel={scrolling.onWheel} onKeyDown={scrolling.onKeyDown}><div className="transcript-content" ref={scrolling.content}>
-        {!conversation?.messages.length && <div className="chat-welcome"><span className="welcome-symbol"><Icon name="gate" size={52} /></span><span className="eyebrow">YOUR SEAT AT THE TABLE</span><h1>What shall we work on?</h1><p>Bring an idea. We’ll find a way forward.<br />Everything stays in your workspace.</p><div className="welcome-cards"><span>✦ &nbsp; Explore an idea</span><span>≋ &nbsp; Work through a question</span></div></div>}
-        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? <StreamingMarkdown text={message.text} streaming={message.role === 'assistant' && message.status === 'Running'} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? 'Waiting for the first words…' : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status === 'Queued' && <button className="queue-remove" aria-label={`Remove queued message ${message.turnNumber}`} onClick={() => void removeQueuedMessage(message.runId)}>Remove from queue</button>}{message.role === 'assistant' && message.status === 'Running' && <span className="run-label" role="status" aria-live="polite"><span className="working-dot" /> Generating · response appears as it arrives</span>}{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button><span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
+        {!conversation?.messages.length && !activeProfile?.isArchived && <div className="chat-welcome"><span className="welcome-symbol"><Icon name="gate" size={52} /></span><span className="eyebrow">YOUR SEAT AT THE TABLE</span><h1>What shall we work on?</h1><p>Bring an idea. We’ll find a way forward.<br />Everything stays in your workspace.</p><div className="welcome-cards">{starterSuggestions(activeProfile).map(suggestion => <button key={suggestion} type="button" onClick={() => { setDraft(suggestion); composerInput.current?.focus(); }}>{suggestion}</button>)}</div></div>}
+        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div>{message.role === 'assistant' && message.status === 'Completed' && formatResponseDuration(message.responseDurationSeconds) && <span className="run-label response-duration" title="Includes time waiting in the queue">{formatResponseDuration(message.responseDurationSeconds)}</span>}</div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? <StreamingMarkdown text={message.text} streaming={message.role === 'assistant' && message.status === 'Running'} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label"><span>Thinking through your request</span><span>Preparing a response</span><span>Working on the reply</span><span className="sr-only">Waiting for a response</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button><span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
       </div></div>
       <div className="composer-region">{activeProfile?.isArchived && <p className="archived-member-notice">Archived member · Saved sessions are kept. Restore the member to start a new session.</p>}{archiveMemberError && !archiveMemberTarget && <p className="chat-error" role="alert">{archiveMemberError}</p>}{chatError && <p className="chat-error" role="alert">{chatError}</p>}
+      {!!queuedMessages.length && <div className="queue-panel" aria-label="Queued messages">{queuedMessages.map(message => {
+        const userMessage = conversation?.messages.find(candidate => candidate.role === 'user' && candidate.turnNumber === message.turnNumber);
+        return <div className="queue-item" key={message.id}><button type="button" aria-label={`Send queued message ${message.turnNumber} now`} title="Send now" disabled={chatBusy} onClick={() => void promoteQueuedMessage(message.runId)}><Icon name="send" size={17} /></button><button type="button" aria-label={`Remove queued message ${message.turnNumber}`} title="Remove from queue" disabled={chatBusy} onClick={() => void removeQueuedMessage(message.runId)}><Icon name="trash" size={17} /></button><span className="queue-snippet">{userMessage?.text || (userMessage?.attachments?.length ? `${userMessage.attachments.length} attachment${userMessage.attachments.length === 1 ? '' : 's'}` : 'Attachment message')}</span>{!!userMessage?.attachments?.length && <details className="queue-attachments"><summary>{userMessage.attachments.length} files</summary>{userMessage.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</details>}</div>;
+      })}</div>}
       <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a local model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || !models || models.status !== 'available' || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
       <input ref={filePicker} className="sr-only" type="file" multiple aria-label="Choose attachments" onChange={event => { addAttachments(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
       <div className="composer-toolbar"><button className="attach-button" aria-label="Add attachments" title="Add files (up to 20 MB each)" onClick={() => filePicker.current?.click()} disabled={chatBusy || database?.status !== 'ready'}><Icon name="attach" size={22} /></button><label className="model-control"><span className="sr-only">Model for {conversation ? 'this conversation' : 'a new conversation'}</span>
@@ -633,6 +722,7 @@ export default function App() {
     {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} onChange={setIdentity} onClose={() => setShowMember(false)} storageError={profileError || storageError} saving={profileSaving} onRetrySave={() => setProfileRetry(value => value + 1)} retryAvailable={profileDirty && !!profileError} />}
     {toolsPanel.present && <aside className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools"><div className="pane-header"><span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span><button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button></div><div className="session-tabs" role="group" aria-label="Session tools">{sessionTabs.map(tab => <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>{tab.label}<small>{tab.status}</small></button>)}</div><section key={previewTab} className="session-placeholder"><span className="session-placeholder-icon">{previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'context' ? '◉' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}</span><span className="eyebrow">{activeSessionPanel.title}</span><p>{activeSessionPanel.detail}</p><small>Preview only · This panel does not run commands or connect external services.</small></section></aside>}
     </div>
+    {deleteMemberTarget && <div className="dialog-backdrop"><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-member-title" aria-describedby="delete-member-description"><h2 id="delete-member-title">Permanently delete {deleteMemberTarget.name}?</h2><p id="delete-member-description">This permanently deletes <strong>{deleteMemberTarget.name}</strong>, all of their saved sessions, messages, and attachments. This cannot be undone. Existing SQL backups may still contain copies. Replies must finish before deletion.</p>{deleteMemberError && <p className="chat-error" role="alert">{deleteMemberError}</p>}<div><button ref={deleteMemberCancel} disabled={chatBusy} onClick={() => { setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); }}>Cancel</button><button className="danger-button" disabled={chatBusy} onClick={() => void deleteGuildMember(deleteMemberTarget)}>{chatBusy ? 'Deleting…' : 'Delete member and sessions'}</button></div></section></div>}
     {archiveMemberTarget && <div className="dialog-backdrop"><section ref={archiveMemberDialog} tabIndex={-1} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-member-title" aria-describedby="archive-member-description"><h2 id="archive-member-title">Archive this member?</h2><p id="archive-member-description"><strong>{archiveMemberTarget.name}</strong> will leave the active council. All saved sessions and messages are kept in Archived members. You can restore this member later. Running or queued replies must finish first.</p>{archiveMemberError && <p className="chat-error" role="alert">{archiveMemberError}</p>}<div><button disabled={chatBusy} onClick={() => { setArchiveMemberTarget(null); memberReturnFocus.current?.focus(); }}>Cancel</button><button disabled={chatBusy} onClick={() => void setGuildMemberArchived(archiveMemberTarget, true)}>{chatBusy ? 'Archiving…' : 'Archive member'}</button></div></section></div>}
     {deleteTarget && <div className="dialog-backdrop"><section ref={deleteDialog} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><h2 id="delete-title">Delete this conversation?</h2><p id="delete-description"><strong>{deleteTarget.title}</strong> and its messages will be permanently removed from Guildhall. This cannot be undone. Existing SQL backups may still contain copies.</p>{deleteError && <p className="chat-error" role="alert">{deleteError}</p>}<div><button ref={cancelDeleteButton} onClick={() => setDeleteTarget(null)} disabled={chatBusy}>Cancel</button><button className="danger-button" onClick={() => void deleteConversation()} disabled={chatBusy || deleteTarget.hasActiveRun}>{chatBusy ? 'Deleting…' : 'Delete conversation'}</button></div></section></div>}
     {renameTarget && <div className="dialog-backdrop"><form className="confirm-dialog" onSubmit={event => { event.preventDefault(); void renameConversation(); }} aria-labelledby="rename-title"><h2 id="rename-title">Rename chat</h2><label className="rename-field">Chat name<input autoFocus maxLength={200} value={renameDraft} onChange={event => setRenameDraft(event.target.value)} /></label>{renameError && <p className="chat-error" role="alert">{renameError}</p>}<div><button type="button" onClick={() => setRenameTarget(null)} disabled={chatBusy}>Cancel</button><button type="submit" disabled={chatBusy || !renameDraft.trim()}>{chatBusy ? 'Saving…' : 'Save name'}</button></div></form></div>}

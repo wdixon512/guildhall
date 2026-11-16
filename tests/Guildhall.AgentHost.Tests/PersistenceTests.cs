@@ -49,7 +49,7 @@ public sealed class PersistenceTests
                 installationId = (await db.ApplicationMetadata.SingleAsync()).InstallationId;
                 Assert.NotEqual(Guid.Empty, installationId);
                 await db.Database.MigrateAsync();
-                Assert.Equal(6, (await db.Database.GetAppliedMigrationsAsync()).Count());
+                Assert.Equal(7, (await db.Database.GetAppliedMigrationsAsync()).Count());
             }
             // New context proves persisted data, not a tracked entity/cache.
             await using (var restarted = new GuildhallDbContext(options))
@@ -66,7 +66,7 @@ public sealed class PersistenceTests
                 {
                     await permissionConnection.OpenAsync();
                     await using var permission = permissionConnection.CreateCommand();
-                    permission.CommandText = "EXECUTE AS USER = 'guildhall_runtime'; SELECT HAS_PERMS_BY_NAME('dbo.Conversations', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatRuns', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'SELECT'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'INSERT'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'UPDATE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'SELECT'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'INSERT'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'UPDATE');";
+                    permission.CommandText = "EXECUTE AS USER = 'guildhall_runtime'; SELECT HAS_PERMS_BY_NAME('dbo.Conversations', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatRuns', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'SELECT'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'INSERT'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'UPDATE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'SELECT'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'INSERT'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'UPDATE'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'DELETE');";
                     await using var reader = await permission.ExecuteReaderAsync();
                     Assert.True(await reader.ReadAsync());
                     Assert.Equal(1, reader.GetInt32(0));
@@ -78,6 +78,7 @@ public sealed class PersistenceTests
                     Assert.Equal(1, reader.GetInt32(6));
                     Assert.Equal(1, reader.GetInt32(7));
                     Assert.Equal(1, reader.GetInt32(8));
+                    Assert.Equal(1, reader.GetInt32(9));
                     reader.Close();
                     await using var revert = permissionConnection.CreateCommand();
                     revert.CommandText = "REVERT";
@@ -114,6 +115,18 @@ public sealed class PersistenceTests
                     await using var command = new SqlCommand("EXECUTE AS USER = 'guildhall_runtime'; DELETE FROM dbo.Conversations WHERE Id = @id; REVERT;", delete);
                     command.Parameters.AddWithValue("@id", conversationId);
                     await command.ExecuteNonQueryAsync();
+                }
+                await using (var deniedDelete = new SqlConnection(connection.ConnectionString))
+                {
+                    await deniedDelete.OpenAsync();
+                    await using var executeAs = new SqlCommand("EXECUTE AS USER = 'guildhall_runtime';", deniedDelete);
+                    await executeAs.ExecuteNonQueryAsync();
+                    await using var directDelete = new SqlCommand("DELETE FROM dbo.ChatRuns WHERE Id = @id;", deniedDelete);
+                    directDelete.Parameters.AddWithValue("@id", runId);
+                    var denied = await Assert.ThrowsAsync<SqlException>(() => directDelete.ExecuteNonQueryAsync());
+                    Assert.Contains("permission", denied.Message, StringComparison.OrdinalIgnoreCase);
+                    await using var revert = new SqlCommand("REVERT;", deniedDelete);
+                    await revert.ExecuteNonQueryAsync();
                 }
                 await using (var verifyCascade = new GuildhallDbContext(options))
                 {
@@ -156,7 +169,7 @@ public sealed class PersistenceTests
             }
             await using (var db = new GuildhallDbContext(options))
             {
-                Assert.Equal(6, (await db.Database.GetAppliedMigrationsAsync()).Count());
+                Assert.Equal(7, (await db.Database.GetAppliedMigrationsAsync()).Count());
                 await using var sql = new SqlConnection(connection.ConnectionString); await sql.OpenAsync();
                 await using var command = new SqlCommand("SELECT OBJECT_ID(N'dbo.ShouldRollback')", sql);
                 Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync());
