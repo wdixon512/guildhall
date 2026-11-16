@@ -49,7 +49,7 @@ public sealed class PersistenceTests
                 installationId = (await db.ApplicationMetadata.SingleAsync()).InstallationId;
                 Assert.NotEqual(Guid.Empty, installationId);
                 await db.Database.MigrateAsync();
-                Assert.Equal(6, (await db.Database.GetAppliedMigrationsAsync()).Count());
+                Assert.Equal(8, (await db.Database.GetAppliedMigrationsAsync()).Count());
             }
             // New context proves persisted data, not a tracked entity/cache.
             await using (var restarted = new GuildhallDbContext(options))
@@ -157,7 +157,7 @@ public sealed class PersistenceTests
             }
             await using (var db = new GuildhallDbContext(options))
             {
-                Assert.Equal(6, (await db.Database.GetAppliedMigrationsAsync()).Count());
+                Assert.Equal(8, (await db.Database.GetAppliedMigrationsAsync()).Count());
                 await using var sql = new SqlConnection(connection.ConnectionString); await sql.OpenAsync();
                 await using var command = new SqlCommand("SELECT OBJECT_ID(N'dbo.ShouldRollback')", sql);
                 Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync());

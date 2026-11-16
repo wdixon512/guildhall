@@ -24,6 +24,7 @@ export async function requestBlob(config: Bootstrap, path: string, signal: Abort
 }
 
 export type AgentProfile = { id: string; name: string; role: string; portraitId: number; customPortrait?: string | null; accent: string; instructions: string; defaultModelId?: string | null; revision: number; isArchived: boolean };
+export type GuildhallBehavior = { instructions: string; revision: number };
 export type Conversation = { id: string; title: string; selectedModelId?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string };
 export type Attachment = { id: string; fileName: string; contentType: string; length: number };
 export type ConversationDetails = { conversation: Conversation; agent?: AgentProfile; messages: { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; modelId?: string; errorCode?: string | null; attachments: Attachment[] }[] };

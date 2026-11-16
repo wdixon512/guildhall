@@ -10,6 +10,8 @@ There is no implemented shared About you collection, private cross-session membe
 
 ## Implemented backend behavior
 
+The shared behavior policy is editable in Workspace settings and stored in the dedicated SQL `GuildhallBehaviorSettings` singleton. The additive `GuildhallBehaviorSettings` migration seeds the prior policy text and grants the runtime identity only SELECT/UPDATE on that table. Saving uses optimistic revision checks. New run admission snapshots the text and revision; subsequent edits affect only newly accepted turns. Existing runs and each member's own instructions remain unchanged. Applying this migration to GuildhallDev requires separate approval.
+
 New accepted runs capture the version and full text of a short common Guildhall behavior policy in the existing SettingsSnapshotJson field. The member's own instructions remain separately captured in InstructionsSnapshot. Execution joins those snapshots into the system message. Already accepted runs without the policy retain their original behavior; changing a policy does not rewrite history.
 
 The policy asks members to take ownership, finish useful work within actual capabilities, check results, distinguish facts from assumptions, and support research with evidence actually available. The voice is a capable colleague with occasional understated guild language. It prohibits invented citations, tool calls, test claims or access to other members' conversations. It grants no new runtime capability. A Manager role cannot command other agents until bounded delegation is implemented in Phase 7.

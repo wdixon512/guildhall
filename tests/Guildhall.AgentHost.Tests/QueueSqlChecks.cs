@@ -62,11 +62,13 @@ internal static class QueueSqlChecks
         Assert.Contains("hold-first", calls[1].Context);
         Assert.DoesNotContain("queued-second", calls[1].Context);
         await using var verify = new GuildhallDbContext(options);
+        var behavior = await verify.GuildhallBehaviorSettings.SingleAsync(x => x.Id == 1);
         var captured = await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId);
+        Assert.Equal(behavior.Revision, JsonDocument.Parse(captured.SettingsSnapshotJson!).RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
         using (var snapshot = JsonDocument.Parse(captured.SettingsSnapshotJson!))
         {
-            Assert.Equal(Chat.GuildhallBehavior.Version, snapshot.RootElement.GetProperty("guildhallBehaviorVersion").GetString());
-            Assert.Equal(Chat.GuildhallBehavior.Instructions, snapshot.RootElement.GetProperty("guildhallBehavior").GetString());
+            Assert.Equal(1, snapshot.RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
+            Assert.Contains("capable member of the Guildhall council", snapshot.RootElement.GetProperty("guildhallBehavior").GetString());
         }
         Assert.Equal("A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == first.RunId)).Status);
@@ -98,7 +100,7 @@ internal static class QueueSqlChecks
             Assert.Equal(Math.Clamp(keepAliveSeconds, 0, 900), json.RootElement.GetProperty("keep_alive").GetInt32());
             var messages = json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
             Assert.Equal("system", messages[0].GetProperty("role").GetString());
-            Assert.StartsWith(Chat.GuildhallBehavior.Instructions, messages[0].GetProperty("content").GetString());
+            Assert.StartsWith("You are a capable member of the Guildhall council", messages[0].GetProperty("content").GetString());
             var text = messages.Last().GetProperty("content").GetString()!;
             Calls.Enqueue((text, json.RootElement.GetProperty("model").GetString()!, string.Join("\n", messages.Select(x => x.GetProperty("content").GetString()))));
             var count = Interlocked.Increment(ref concurrent); Peak = Math.Max(Peak, count);

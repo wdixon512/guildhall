@@ -263,6 +263,25 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.ToTable("Conversations", (string)null);
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.GuildhallBehaviorSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GuildhallBehaviorSettings", (string)null);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatAttachment", b =>
                 {
                     b.HasOne("Guildhall.AgentHost.Persistence.ChatMessage", "Message")

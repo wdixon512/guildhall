@@ -39,6 +39,16 @@ internal static class AgentProfileSqlChecks
         Assert.Equal("Rules for Scholar", untouched.Instructions);
         Assert.Equal("Maren the Steward", Assert.Single(profiles, x => x.Id == changed.Id).Name);
 
+        var behavior = await client.GetFromJsonAsync<GuildhallBehaviorResponse>("/guildhall-behavior");
+        Assert.NotNull(behavior);
+        var editedBehavior = "Shared revised council behavior.";
+        var updatedBehavior = await client.PutAsJsonAsync("/guildhall-behavior", new UpdateGuildhallBehaviorRequest(editedBehavior, behavior.Revision));
+        updatedBehavior.EnsureSuccessStatusCode();
+        behavior = await updatedBehavior.Content.ReadFromJsonAsync<GuildhallBehaviorResponse>();
+        Assert.Equal(editedBehavior, behavior!.Instructions);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PutAsJsonAsync("/guildhall-behavior", new UpdateGuildhallBehaviorRequest("stale", behavior.Revision - 1))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PutAsJsonAsync("/guildhall-behavior", new UpdateGuildhallBehaviorRequest("  ", behavior.Revision))).StatusCode);
+
         async Task<ConversationResponse> NewSession(Guid agentId) {
             var response = await client.PostAsJsonAsync("/conversations", new CreateConversationRequest("profile-session", null, agentId));
             response.EnsureSuccessStatusCode();

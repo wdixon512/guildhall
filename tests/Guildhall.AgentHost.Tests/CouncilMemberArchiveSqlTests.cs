@@ -78,7 +78,7 @@ public sealed class CouncilMemberArchiveSqlTests
             foreach (var table in tables) snapshots.Add(table, await Snapshot(table));
             await using (var upgrade = new GuildhallDbContext(options))
             {
-                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive" }, await upgrade.Database.GetPendingMigrationsAsync());
+                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings" }, await upgrade.Database.GetPendingMigrationsAsync());
                 await upgrade.Database.MigrateAsync();
                 await upgrade.Database.MigrateAsync();
                 Assert.Empty(await upgrade.Database.GetPendingMigrationsAsync());
@@ -94,7 +94,7 @@ public sealed class CouncilMemberArchiveSqlTests
             await using (var permissions = await runtime.ExecuteReaderAsync())
             {
                 Assert.True(await permissions.ReadAsync());
-                for (var i = 0; i < 7; i++) Assert.Equal(0, permissions.GetInt32(i));
+                for (var i = 0; i < 7; i++) Assert.Equal(i == 3 ? 1 : 0, permissions.GetInt32(i));
             }
             runtime.CommandText = "ALTER TABLE dbo.AgentDefinitions ADD UnauthorizedColumn int NULL";
             await Assert.ThrowsAsync<SqlException>(() => runtime.ExecuteNonQueryAsync());

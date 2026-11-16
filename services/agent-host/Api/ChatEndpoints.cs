@@ -16,6 +16,26 @@ public static class ChatEndpoints
 
     public static void MapChat(this WebApplication app)
     {
+        app.MapGet("/guildhall-behavior", async (IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var settings = await db.GuildhallBehaviorSettings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1, ct);
+            return settings is null ? Results.NotFound(new ErrorResponse("settings_missing", "Guildhall behavior settings have not been initialized by the database migration.")) : Results.Ok(new GuildhallBehaviorResponse(settings.Instructions, settings.Revision));
+        });
+        app.MapPut("/guildhall-behavior", async (UpdateGuildhallBehaviorRequest request, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Instructions) || request.Instructions.Length > 4000)
+                return Results.BadRequest(new ErrorResponse("invalid_behavior", "Guildhall behavior must contain 1–4000 characters."));
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var settings = await db.GuildhallBehaviorSettings.SingleOrDefaultAsync(x => x.Id == 1, ct);
+            if (settings is null) return Results.NotFound(new ErrorResponse("settings_missing", "Guildhall behavior settings have not been initialized by the database migration."));
+            if (settings.Revision != request.ExpectedRevision) return Results.Conflict(new ErrorResponse("revision_conflict", "Guildhall behavior changed. Reload it before saving."));
+            settings.Instructions = request.Instructions;
+            settings.Revision++;
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateConcurrencyException) { return Results.Conflict(new ErrorResponse("revision_conflict", "Guildhall behavior changed. Reload it before saving.")); }
+            return Results.Ok(new GuildhallBehaviorResponse(settings.Instructions, settings.Revision));
+        });
         app.MapPost("/runs/{id:guid}/cancel", async (Guid id, ChatRunner runner, CancellationToken ct) =>
             await runner.CancelAsync(id, ct) ? Results.Ok(new { runId = id }) : Results.NotFound());
         app.MapGet("/assistant", async (IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
@@ -198,13 +218,15 @@ public static class ChatEndpoints
                 if (await db.ChatRuns.CountAsync(x => x.ConversationId == id && x.Status == ChatRunStatus.Queued, ct) >= 8)
                     return Results.Conflict(new ErrorResponse("queue_full", "This session has eight queued messages. Remove a queued message or wait for a reply."));
                 var interrupted = deliveryMode == "send_now" ? await db.ChatRuns.Where(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling)).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct) : null;
+                var behavior = await db.GuildhallBehaviorSettings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1, ct);
+                if (behavior is null) return Results.Conflict(new ErrorResponse("settings_missing", "Guildhall behavior settings require the approved database migration."));
                 var now = DateTime.UtcNow;
                 var turn = await db.ChatRuns.Where(x => x.ConversationId == id).Select(x => (int?)x.TurnNumber).MaxAsync(ct) ?? 0;
                 var run = new ChatRun { Id = Guid.NewGuid(), ConversationId = id, TurnNumber = turn + 1,
                     ClientRequestId = clientRequestId, RequestFingerprint = fingerprint, Status = ChatRunStatus.Queued,
                     StartedUtc = now, UpdatedUtc = now, InstructionsSnapshot = conversation.AgentDefinition.Instructions,
                     ModelId = conversation.SelectedModelId, ProviderId = "ollama",
-                    SettingsSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { deliveryMode, interruptedRunId = interrupted, guildhallBehaviorVersion = GuildhallBehavior.Version, guildhallBehavior = GuildhallBehavior.Instructions }) };
+                    SettingsSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { deliveryMode, interruptedRunId = interrupted, guildhallBehaviorRevision = behavior.Revision, guildhallBehavior = behavior.Instructions }) };
                 var userMessage = new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.User, Text = text ?? string.Empty };
                 foreach (var item in uploaded) userMessage.Attachments.Add(new ChatAttachment { Id = Guid.NewGuid(), FileName = item.Name, ContentType = item.Type, Length = item.Content.LongLength, Content = item.Content });
                 run.Messages.Add(userMessage);
