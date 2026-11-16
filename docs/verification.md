@@ -8,7 +8,7 @@ Verified locally on Windows on November 15, 2026. Phase 0 is implemented and the
 - One ASP.NET Core host with authenticated loopback health, SQL readiness, and normalized Ollama model discovery endpoints.
 - EF Core SQL Server bootstrap migration with one persistent installation identifier; no chat, agent, run, or tool schema.
 - Dedicated `GuildhallDev` database and restricted `guildhall_runtime` SQL login, provisioned after explicit approval. Windows identity performs migrations; runtime can only read the Phase 0 metadata/history tables.
-- Windows DPAPI-protected runtime password in ignored `.local/runtime.credential.xml`. No credentials or tokens in frontend files, URLs, browser storage, or command arguments.
+- Windows DPAPI-protected runtime password shared by local worktrees at `%LOCALAPPDATA%\Guildhall\dev\runtime.credential.xml`; existing `.local/runtime.credential.xml` files remain a fallback. No credentials or tokens in frontend files, URLs, browser storage, or command arguments.
 - Development launcher owns host, Vite, and Tauri children; embedded-desktop mode needs no Vite server. Explicit migration/provisioning/verification and live host smoke commands.
 
 ## Automated results
