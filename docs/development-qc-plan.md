@@ -91,6 +91,8 @@ pwsh -NoProfile -File .\scripts\Stop-Qc.ps1
 
 Implementation may consolidate commands into one lifecycle script. It must expose a stable session handle and use ignored `.local/qc/<session>/` for ownership records and sanitized evidence. The owner receives a single tested development launch command and a short functional checklist; the agent runs automation.
 
+Q01 status output now supports `-Json` for automation. The JSON includes the registered session/process states, listener ownership, source fingerprint, checkout, and working-tree state; it never includes session tokens or credentials. Default output remains the existing human-readable format.
+
 Completion record: Q01–Q07 outcomes, dependency versions, exact commands run, failed/skipped checks, native vs browser scope, live vs fixture provider, cleanup proof, and the screenshot/artifact for chat progressing to completion. Phase 1 remains incomplete until its existing product acceptance criteria also pass. Phase 2 does not start merely because the harness passes.
 
 ## Primary references
