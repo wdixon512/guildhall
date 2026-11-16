@@ -90,3 +90,15 @@ Owner functional QC after the changes are merged:
 2. Open member actions near the bottom of the council at normal and narrow/high-zoom sizes. Archive and Delete controls should remain compact and visible. Tab/arrow/Home/End/Enter/Escape should keep working, and Escape from deletion confirmation should return focus without collapsing the sidebar.
 3. At 420px and 900px widths, send a message and queue a follow-up. The composer controls should appear without moving the text area or changing the bar height.
 4. Open the Guild member panel and inspect long instructions, portrait controls, accent colors, code and tables at 420px and 150% scale. Nothing should create a horizontal scrollbar.
+
+## Resizable chat panes follow-up
+
+The council sidebar, Session Tools panel, and Guild Member editor can each be resized on the main chat screen. Drag the divider with a mouse or touch; keyboard users can focus it and use arrows (10 px), Shift+arrows (40 px), Home (minimum), and End (maximum). Widths persist in local browser storage. At narrow widths, side panels remain overlays and the council collapses on entry to the overlay layout. The composer reflows its controls when a side panel leaves less than 680 px for chat.
+
+Functional QC: on a desktop window, drag each divider in both directions and confirm the chat stays usable; resize at a narrow width and verify the overlays do not create horizontal page scrolling. Tab to each divider and use arrows/Home/End; confirm its focus outline and width value update. Reload and confirm the three saved widths return.
+
+Automated verification for this follow-up: `npm.cmd --prefix apps/desktop run test -- --run` (43 passed), `npm.cmd --prefix apps/desktop run typecheck`, `npm.cmd --prefix apps/desktop run build`, and `git diff --check` passed. An isolated Playwright fixture with mocked API responses dragged all three dividers, confirmed saved widths after reload, and verified the 620 px member overlay has no horizontal overflow. At 1600 px with Session Tools open, the composer reflowed and its text area remained at least 250 px wide. The independent Luna UI reviewer inspected the rendered screenshots, confirmed the composer correction, and reported no remaining actionable findings. Screenshots and the repeatable local fixture are in ignored `apps/desktop/.local/pane-review`. Run the functional QC in the native window after integration; no native WebView verification was performed.
+
+### Revalidation after the resizable panes merge
+
+The PR #6 branch now includes latest main's resizable-pane implementation. The Guild Member resize handle sits wholly inside the panel's leading inset, so horizontal overflow clipping cannot cut its touch target. The browser fixture asserts all 28 px of the handle remain inside the panel. The merged frontend passes 45 tests, typecheck, and production build; native WebView checks remain outstanding.
