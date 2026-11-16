@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { bootstrap, parseDiscovery, parseReadiness, request } from './api';
 import type { AgentProfile, Bootstrap, Conversation, ConversationDetails, Discovery, Readiness } from './api';
 import { MessageAttachment } from './MessageAttachment';
@@ -95,12 +96,14 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
+  const [memberMenuPosition, setMemberMenuPosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const [archiveMemberTarget, setArchiveMemberTarget] = useState<AgentProfile | null>(null);
   const [deleteMemberTarget, setDeleteMemberTarget] = useState<AgentProfile | null>(null);
   const [deleteMemberError, setDeleteMemberError] = useState('');
   const deleteMemberCancel = useRef<HTMLButtonElement | null>(null);
   const archiveMemberDialog = useRef<HTMLElement | null>(null);
   const memberMenuAction = useRef<HTMLButtonElement | null>(null);
+  const memberMenuElement = useRef<HTMLDivElement | null>(null);
   const memberReturnFocus = useRef<HTMLElement | null>(null);
   const [archiveMemberError, setArchiveMemberError] = useState('');
   const [showArchivedMembers, setShowArchivedMembers] = useState(false);
@@ -191,6 +194,36 @@ export default function App() {
     return () => document.removeEventListener('pointerdown', dismiss);
   }, [memberMenuId]);
 
+  useLayoutEffect(() => {
+    if (!memberMenuId) return;
+    const positionMenu = () => {
+      const anchor = memberReturnFocus.current;
+      const menu = memberMenuElement.current;
+      const list = anchor?.closest('.conversation-list');
+      const sidebar = anchor?.closest('.conversation-sidebar');
+      if (!anchor || !menu || !list || !sidebar) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const margin = 8;
+      const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')) || 1;
+      const width = Math.min(menuRect.width, sidebarRect.width - margin * 2);
+      const left = Math.max(sidebarRect.left + margin, Math.min(anchorRect.right - width, sidebarRect.right - width - margin));
+      let top = anchorRect.bottom + 4;
+      if (top + menuRect.height > listRect.bottom) top = anchorRect.top - menuRect.height - 4;
+      top = Math.max(margin, Math.min(top, window.innerHeight - menuRect.height - margin));
+      setMemberMenuPosition({ left: left / scale, top: top / scale, width: width / scale });
+    };
+    positionMenu();
+    window.addEventListener('resize', positionMenu);
+    window.addEventListener('scroll', positionMenu, true);
+    return () => {
+      window.removeEventListener('resize', positionMenu);
+      window.removeEventListener('scroll', positionMenu, true);
+    };
+  }, [memberMenuId, uiScale]);
+
   useEffect(() => {
     if (!archiveMemberTarget) return;
     const dialog = archiveMemberDialog.current;
@@ -215,15 +248,19 @@ export default function App() {
     if (!deleteMemberTarget) return;
     deleteMemberCancel.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !chatBusy) { event.preventDefault(); setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); return; }
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (!chatBusy) { setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); }
+        return;
+      }
       if (event.key !== 'Tab') return;
       const buttons = document.querySelectorAll<HTMLButtonElement>('[aria-labelledby="delete-member-title"] button:not(:disabled)');
       if (!buttons.length) { event.preventDefault(); return; }
       if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons[buttons.length - 1].focus(); }
       else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) { event.preventDefault(); buttons[0].focus(); }
     };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [deleteMemberTarget, chatBusy]);
 
   useEffect(() => {
@@ -643,22 +680,34 @@ export default function App() {
     <div className="council-group-heading" data-member-menu={memberMenuId === profile.id ? '' : undefined} onContextMenu={event => { event.preventDefault(); memberReturnFocus.current = document.getElementById(`member-actions-${profile.id}`); setMemberMenuId(profile.id); }} onKeyDown={event => {
       if (event.key === 'Escape' && memberMenuId === profile.id) { event.preventDefault(); event.stopPropagation(); setMemberMenuId(null); memberReturnFocus.current?.focus(); }
       if (event.key === 'Tab') setMemberMenuId(null);
-      if (memberMenuId === profile.id && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-        event.preventDefault();
-        const actions = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
-        if (!actions.length) return;
-        const current = actions.indexOf(document.activeElement as HTMLButtonElement);
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? actions.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + actions.length) % actions.length;
-        actions[next]?.focus();
-      }
     }}>
       <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy || hasDraft || profileDirty || profileSaving} onClick={() => { setConversation(null); setSelectedAgentId(profile.id); setIdentity(toMemberIdentity(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
       {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || hasDraft || profileDirty || profileSaving || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
       <button id={`member-actions-${profile.id}`} className="icon-button member-menu-toggle" aria-label={`Member actions for ${profile.name}`} aria-haspopup="menu" aria-expanded={memberMenuId === profile.id} aria-controls={memberMenuId === profile.id ? `member-menu-${profile.id}` : undefined} onClick={event => { memberReturnFocus.current = event.currentTarget; setMemberMenuId(value => value === profile.id ? null : profile.id); }}>···</button>
-      {memberMenuId === profile.id && <div className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`}>
-        <button ref={memberMenuAction} role="menuitem" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}>{profile.isArchived ? 'Restore member' : 'Archive member'}</button>
-        <button role="menuitem" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}>Delete member and sessions</button>
-      </div>}
+      {memberMenuId === profile.id && createPortal(<div ref={memberMenuElement} data-member-menu="" style={memberMenuPosition ?? undefined} className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`} onKeyDown={event => {
+        if (event.key === 'Escape') { event.preventDefault(); setMemberMenuId(null); memberReturnFocus.current?.focus(); return; }
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          const group = memberReturnFocus.current?.closest('.council-group');
+          const nextSession = group?.querySelector<HTMLButtonElement>('.conversation-row button');
+          const nextMember = group?.nextElementSibling?.querySelector<HTMLButtonElement>('.council-profile-select');
+          setMemberMenuId(null);
+          if (event.shiftKey) memberReturnFocus.current?.focus();
+          else (nextSession ?? nextMember ?? memberReturnFocus.current)?.focus();
+          return;
+        }
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const actions = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+          if (!actions.length) return;
+          const current = actions.indexOf(document.activeElement as HTMLButtonElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? actions.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + actions.length) % actions.length;
+          actions[next]?.focus();
+        }
+      }}>
+        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
+        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
+      </div>, document.body)}
     </div>
     {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
     {!sessions.length && <p className="council-no-sessions">{search ? 'No matching sessions.' : showArchived ? 'No archived sessions.' : 'No sessions yet.'}</p>}
@@ -702,7 +751,7 @@ export default function App() {
       <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => { setShowMember(false); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
       <div className="messages" ref={transcript} tabIndex={0} aria-label="Messages" onScroll={scrolling.onScroll} onWheel={scrolling.onWheel} onKeyDown={scrolling.onKeyDown}><div className="transcript-content" ref={scrolling.content}>
         {!conversation?.messages.length && !activeProfile?.isArchived && <div className="chat-welcome"><span className="welcome-symbol"><Icon name="gate" size={52} /></span><span className="eyebrow">YOUR SEAT AT THE TABLE</span><h1>What shall we work on?</h1><p>Bring an idea. We’ll find a way forward.<br />Everything stays in your workspace.</p><div className="welcome-cards">{starterSuggestions(activeProfile).map(suggestion => <button key={suggestion} type="button" onClick={() => { setDraft(suggestion); composerInput.current?.focus(); }}>{suggestion}</button>)}</div></div>}
-        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div>{message.role === 'assistant' && message.status === 'Completed' && formatResponseDuration(message.responseDurationSeconds) && <span className="run-label response-duration" title="Includes time waiting in the queue">{formatResponseDuration(message.responseDurationSeconds)}</span>}</div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? <StreamingMarkdown text={message.text} streaming={message.role === 'assistant' && message.status === 'Running'} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}</span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button><span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
+        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}{message.role === 'assistant' && message.status === 'Completed' && formatResponseDuration(message.responseDurationSeconds) && <span className="run-label response-duration" title="Includes time waiting in the queue">{formatResponseDuration(message.responseDurationSeconds)}</span>}<div className="message-surface"><div className="markdown-body">{message.text ? <StreamingMarkdown text={message.text} streaming={message.role === 'assistant' && message.status === 'Running'} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}</span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button><span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
       </div></div>
       <div className="composer-region">{activeProfile?.isArchived && <p className="archived-member-notice">Archived member · Saved sessions are kept. Restore the member to start a new session.</p>}{archiveMemberError && !archiveMemberTarget && <p className="chat-error" role="alert">{archiveMemberError}</p>}{chatError && <p className="chat-error" role="alert">{chatError}</p>}
       {!!queuedMessages.length && <div className="queue-panel" aria-label="Queued messages">{queuedMessages.map(message => {

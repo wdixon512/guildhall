@@ -23,7 +23,7 @@ Owner resolved member deletion (7): permanently delete the member and ALL linked
 - Elapsed timing uses server records, labels its measurement honestly, survives reopen and omits unavailable data. Queue waiting is not presented as measured inference.
 - Only empty active replies animate waiting wording; reduced motion disables transitions. No invented progress/work claims or unnecessary live announcements.
 - Queued user/assistant transcript placeholders collapse to composer-adjacent rows with snippets and named promote/remove controls. Promote reuses the same run and attachments; stale/active errors remain actionable.
-- No root horizontal scrollbar or scrolling past the application at widths 420/620/900/1280/1920 and scales 80/100/125/150 percent; long code blocks retain their own horizontal scrolling. Composer controls remain usable with side panels, attachments, draft text and queued work.
+- No horizontal scrolling at widths 420/620/900/1280/1920 and scales 80/100/125/150 percent; long code blocks and tables wrap within their available width. Composer controls remain usable with side panels, attachments, draft text and queued work.
 - Existing archive, restore, stop, message send, export and profile editing remain functional.
 
 Agent-run commands (planned until recorded as passed):
@@ -61,7 +61,7 @@ Close any existing development app through its owner before relaunching; the lau
 3. Check the response-time blip above a completed reply; it includes queue wait. While awaiting first text, short waiting phrases cycle without pretending tool work. Reduced-motion mode shows a static phrase.
 4. Queue two follow-ups. Only compact composer-adjacent rows appear for pending turns. Left icons promote/remove the existing queued message, with no duplicate user turn. Attachment access is available from the compact files disclosure. An error leaves saved content intact.
 5. Archive and restore a member, confirming sessions are retained. For destructive QC use a deliberately disposable member/session only: Cancel member deletion once, then confirm its irreversible member/session/message/attachment removal. Other members remain. Never delete valuable history just to test.
-6. Resize through 420/620/900/1280/1920px and change display scale through 80/100/125/150%. Check both collapsed and expanded sidebar, member/tools panels, long draft, attachment and queued messages. The composer remains reachable, paperclip is intact, and root page has no scrollbar/overscroll; code blocks may scroll internally. Clock and shield navigation retain accurate labels. Session tools remains visible and Open chat is absent.
+6. Resize through 420/620/900/1280/1920px and change display scale through 80/100/125/150%. Check both collapsed and expanded sidebar, member/tools panels, long draft, attachment and queued messages. The composer remains reachable, paperclip is intact, and horizontal scrolling is absent; code and tables wrap to fit. Clock and shield navigation retain accurate labels. Session tools remains visible and Open chat is absent.
 7. Tab to member actions, use arrows/Home/End across Archive and Delete, Enter to open confirmation, Escape to cancel, and confirm focus returns. Confirm destructive controls are unavailable or refused while replies are active/queued.
 
 ### Final browser and independent review results
@@ -73,3 +73,16 @@ Independent `.cursor/agents/guildhall-ui-reviewer.md` review reports no remainin
 Final frontend regression run: 33 tests passed, production build/typecheck passed, and `git diff --check` passed. Backend final run: Release build zero warnings/errors, 33 deterministic tests and 2 isolated SQL integration tests passed. The permission migration was subsequently approved/applied; see its verification record. Changes are prepared on `codex/frontend` for pull-request review; native QC and merging remain outstanding.
 
 PR preparation also added a SQL regression for promoting past a removed queued turn: promotion reuses only queued turn-number slots and leaves cancelled history unchanged.
+
+### Owner-requested chat layout corrections — November 16, 2026
+
+The owner reported a response-time label that sat beside the member identity, an oversized member lifecycle menu, a composer jump after sending at narrow widths, and horizontal overflow in the member panel. The response-time label now sits right-aligned immediately above its reply. Member actions use a compact, keyboard-accessible popover constrained to the sidebar and positioned clear of its footer. The composer reserves its narrow-window toolbar rows and footer space before a run starts. The Guild member pane and formatted code/tables wrap without horizontal scrolling.
+
+Updated checks passed: frontend typecheck, 37 Vitest tests, production build, and the local Playwright responsive fixture at 420/620/900/1280/1920px and 80/100/125/150% scale. The fixture checks member-panel scroll width, compact member menu bounds, stable composer geometry with and without queued controls, and no browser errors. This is deterministic browser-fixture evidence; native/live-host interaction remains separate.
+
+Owner functional QC after the changes are merged:
+
+1. Open a completed response and verify its elapsed-time label sits just above the reply's right edge, not alongside the member name.
+2. Open member actions near the bottom of the council at normal and narrow/high-zoom sizes. Archive and Delete controls should remain compact and visible. Tab/arrow/Home/End/Enter/Escape should keep working, and Escape from deletion confirmation should return focus without collapsing the sidebar.
+3. At 420px and 900px widths, send a message and queue a follow-up. The composer controls should appear without moving the text area or changing the bar height.
+4. Open the Guild member panel and inspect long instructions, portrait controls, accent colors, code and tables at 420px and 150% scale. Nothing should create a horizontal scrollbar.
