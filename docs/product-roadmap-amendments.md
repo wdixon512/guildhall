@@ -36,3 +36,7 @@ The UI may show local and hosted agent choices before they are connected. Select
 - Each access mode is tested with the same action matrix so its label matches enforced behavior. Full autopilot is visibly dangerous and scoped to the active project and selected connections.
 - Usage totals identify provider, measurement source, currency/time range when applicable, and missing data.
 - Pane collapse, app zoom (`Ctrl`/`Cmd` `+`, `-`, `0`), focus restoration, and narrow-window access pass functional QC.
+
+## November 16 Phase 1 frontend polish
+
+The owner requested unread reply indicators, clearer member/session grouping, clickable role/instruction-based starter examples, persisted response elapsed labels, compact queued-message controls with promotion/removal, active waiting-word feedback, clock/shield navigation icons, removal of redundant Open chat, and responsive composer/root overflow corrections. These remain Phase 1 chat quality work. Starter examples use local deterministic categories rather than model-generated suggestions, and do not imply project tools or scheduling are connected. New member permanent deletion was requested alongside retained-session archival; the owner explicitly chose permanent deletion of the member and ALL linked sessions after confirmation. Archive remains the option that preserves sessions. See [the bounded implementation and QC plan](frontend-polish-plan.md).

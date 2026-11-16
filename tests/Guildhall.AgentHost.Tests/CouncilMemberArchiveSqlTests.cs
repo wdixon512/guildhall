@@ -85,18 +85,25 @@ public sealed class CouncilMemberArchiveSqlTests
                 Assert.All(await upgrade.AgentDefinitions.AsNoTracking().ToListAsync(), x => Assert.False(x.IsArchived));
                 Assert.Equal(installationId, (await upgrade.ApplicationMetadata.SingleAsync()).InstallationId);
             }
+            await AgentProfileSqlChecks.VerifyProtectedSeedDeleteAsync(options);
             foreach (var table in tables) Assert.Equal(snapshots[table], await Snapshot(table));
             Assert.Equal("ready", (await readiness.CheckAsync(default)).Status);
 
             // Existing table-specific runtime grants cover the new column, without DDL/delete rights.
             await using var runtime = sql.CreateCommand();
-            runtime.CommandText = "EXECUTE AS USER = 'guildhall_runtime'; SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER'), IS_ROLEMEMBER('db_owner'), IS_ROLEMEMBER('db_datawriter'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatRuns', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatMessages', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'DELETE');";
+            runtime.CommandText = "EXECUTE AS USER = 'guildhall_runtime'; SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER'), IS_ROLEMEMBER('db_owner'), IS_ROLEMEMBER('db_datawriter'), HAS_PERMS_BY_NAME('dbo.Conversations', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.AgentDefinitions', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatRuns', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatMessages', 'OBJECT', 'DELETE'), HAS_PERMS_BY_NAME('dbo.ChatAttachments', 'OBJECT', 'DELETE');";
             await using (var permissions = await runtime.ExecuteReaderAsync())
             {
                 Assert.True(await permissions.ReadAsync());
-                for (var i = 0; i < 7; i++) Assert.Equal(i == 3 ? 1 : 0, permissions.GetInt32(i));
+                for (var i = 0; i < 3; i++) Assert.Equal(0, permissions.GetInt32(i));
+                Assert.Equal(1, permissions.GetInt32(3)); // Existing conversation lifecycle grant is preserved.
+                Assert.Equal(1, permissions.GetInt32(4)); // New, narrowly scoped member-delete grant.
+                for (var i = 5; i < 8; i++) Assert.Equal(0, permissions.GetInt32(i));
             }
             runtime.CommandText = "ALTER TABLE dbo.AgentDefinitions ADD UnauthorizedColumn int NULL";
+            await Assert.ThrowsAsync<SqlException>(() => runtime.ExecuteNonQueryAsync());
+            runtime.Parameters.AddWithValue("@runId", runId);
+            runtime.CommandText = "DELETE FROM dbo.ChatRuns WHERE Id = @runId;";
             await Assert.ThrowsAsync<SqlException>(() => runtime.ExecuteNonQueryAsync());
             runtime.Parameters.AddWithValue("@id", memberId);
             runtime.CommandText = "UPDATE dbo.AgentDefinitions SET IsArchived = 1 WHERE Id = @id; SELECT IsArchived FROM dbo.AgentDefinitions WHERE Id = @id;";

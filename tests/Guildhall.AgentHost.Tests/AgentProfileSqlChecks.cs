@@ -20,7 +20,6 @@ internal static class AgentProfileSqlChecks
         }));
         using var client = app.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://127.0.0.1:43120") });
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiFactory.Token);
-
         async Task<AgentProfileResponse> Create(string name, int portrait) {
             var response = await client.PostAsJsonAsync("/agents", new CreateAgentProfileRequest(name, "Steward", portrait, null, "#71465f", $"Rules for {name}", null));
             response.EnsureSuccessStatusCode();
@@ -64,12 +63,18 @@ internal static class AgentProfileSqlChecks
         Assert.Equal("Rules for Scholar", otherSession.Agent.Instructions);
         // Preserve real persisted history and provenance through archive and restore.
         var runId = Guid.NewGuid();
+        var secondRunId = Guid.NewGuid();
         await using (var seed = new GuildhallDbContext(options)) {
             var now = DateTime.UtcNow;
             var run = new ChatRun { Id = runId, ConversationId = firstSession.Conversation.Id, TurnNumber = 1, ClientRequestId = "member-archive", RequestFingerprint = "fixture", Status = ChatRunStatus.Completed, StartedUtc = now, UpdatedUtc = now, FinishedUtc = now, ModelId = "fixture-model", InstructionsSnapshot = "original rules" };
             run.Messages.Add(new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.User, Text = "Keep this question" });
             run.Messages.Add(new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.Assistant, Text = "Keep this answer" });
-            seed.ChatRuns.Add(run); await seed.SaveChangesAsync();
+            var secondRun = new ChatRun { Id = secondRunId, ConversationId = secondSession.Conversation.Id, TurnNumber = 1, ClientRequestId = "member-delete", RequestFingerprint = "fixture-delete", Status = ChatRunStatus.Completed, StartedUtc = now, UpdatedUtc = now, FinishedUtc = now, ModelId = "fixture-model", InstructionsSnapshot = "second session rules" };
+            var uploaded = new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.User, Text = "Keep this attachment until deletion" };
+            uploaded.Attachments.Add(new ChatAttachment { Id = Guid.NewGuid(), FileName = "fixture.txt", ContentType = "text/plain", Length = 4, Content = [1, 2, 3, 4] });
+            secondRun.Messages.Add(uploaded);
+            secondRun.Messages.Add(new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.Assistant, Text = "Second answer" });
+            seed.ChatRuns.AddRange(run, secondRun); await seed.SaveChangesAsync();
         }
         async Task<HttpResponseMessage> Lifecycle(bool archived, long revision) => await client.PatchAsJsonAsync($"/agents/{changed.Id}/lifecycle", new GuildMemberLifecycleRequest(archived, revision));
         foreach (var status in new[] { ChatRunStatus.Running, ChatRunStatus.Cancelling, ChatRunStatus.Queued }) {
@@ -78,6 +83,9 @@ internal static class AgentProfileSqlChecks
             var blocked = await Lifecycle(true, changed.Revision);
             Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
             Assert.Equal("member_has_active_run", (await blocked.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
+            var deleteBlocked = await client.DeleteAsync($"/agents/{changed.Id}?expectedRevision={changed.Revision}");
+            Assert.Equal(HttpStatusCode.Conflict, deleteBlocked.StatusCode);
+            Assert.Equal("member_has_active_run", (await deleteBlocked.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
             await using var verify = new GuildhallDbContext(options);
             Assert.False((await verify.AgentDefinitions.SingleAsync(x => x.Id == changed.Id)).IsArchived);
         }
@@ -98,7 +106,8 @@ internal static class AgentProfileSqlChecks
         Assert.Equal("member_archived", (await rejected.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
         var retained = (await client.GetFromJsonAsync<ConversationResponse>($"/conversations/{firstSession.Conversation.Id}"))!;
         Assert.True(retained.Agent.IsArchived);
-        Assert.Equal(firstSession.Conversation, retained.Conversation);
+        Assert.Equal(firstSession.Conversation, retained.Conversation with { LastResponseUtc = null });
+        Assert.NotNull(retained.Conversation.LastResponseUtc);
         Assert.Equal(new[] { "Keep this question", "Keep this answer" }, retained.Messages.Select(x => x.Text));
         var listed = (await client.GetFromJsonAsync<ConversationSummary[]>("/conversations?limit=100"))!;
         Assert.Contains(listed, x => x.Id == firstSession.Conversation.Id);
@@ -115,7 +124,39 @@ internal static class AgentProfileSqlChecks
         Assert.False(restored.IsArchived);
         Assert.Equal(changed with { Revision = archived.Revision + 1 }, restored);
         await NewSession(changed.Id);
+        var staleDelete = await client.DeleteAsync($"/agents/{changed.Id}?expectedRevision={restored.Revision - 1}");
+        Assert.Equal(HttpStatusCode.Conflict, staleDelete.StatusCode);
+        await using (var beforeDelete = new GuildhallDbContext(options))
+        {
+            Assert.True(await beforeDelete.AgentDefinitions.AnyAsync(x => x.Id == changed.Id));
+            Assert.Equal(3, await beforeDelete.Conversations.CountAsync(x => x.AgentDefinitionId == changed.Id));
+        }
+        var deleteMember = await client.DeleteAsync($"/agents/{changed.Id}?expectedRevision={restored.Revision}");
+        Assert.Equal(HttpStatusCode.NoContent, deleteMember.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/agents/{changed.Id}?expectedRevision={restored.Revision}")).StatusCode);
+        await using (var afterDelete = new GuildhallDbContext(options))
+        {
+            Assert.False(await afterDelete.AgentDefinitions.AnyAsync(x => x.Id == changed.Id));
+            Assert.False(await afterDelete.Conversations.AnyAsync(x => x.AgentDefinitionId == changed.Id));
+            Assert.False(await afterDelete.ChatRuns.AnyAsync(x => x.Id == runId || x.Id == secondRunId));
+            Assert.False(await afterDelete.ChatAttachments.AnyAsync(x => x.FileName == "fixture.txt"));
+            Assert.True(await afterDelete.AgentDefinitions.AnyAsync(x => x.Id == scholar.Id));
+            Assert.True(await afterDelete.Conversations.AnyAsync(x => x.Id == otherSession.Conversation.Id));
+        }
 
+    }
+
+    public static async Task VerifyProtectedSeedDeleteAsync(DbContextOptions<GuildhallDbContext> options)
+    {
+        await using var app = new ApiFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services => {
+            services.RemoveAll<IDbContextFactory<GuildhallDbContext>>();
+            services.AddSingleton<IDbContextFactory<GuildhallDbContext>>(new Factory(options));
+        }));
+        using var client = app.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://127.0.0.1:43120") });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ApiFactory.Token);
+        var response = await client.DeleteAsync("/agents/7e3b38f2-2a51-4d15-93c2-0f8f7b8cf1c2?expectedRevision=1");
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("member_protected", (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
     }
 
     private sealed class Factory(DbContextOptions<GuildhallDbContext> options) : IDbContextFactory<GuildhallDbContext>

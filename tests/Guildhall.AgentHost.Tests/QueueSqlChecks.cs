@@ -45,6 +45,8 @@ internal static class QueueSqlChecks
         var third = await Send("queued-third");
         var removed = await Send("remove-me");
         (await client.PostAsync($"/runs/{removed.RunId}/cancel", null)).EnsureSuccessStatusCode();
+        var afterRemoval = (await client.GetFromJsonAsync<ConversationResponse>($"/conversations/{conversation.Id}"))!;
+        Assert.Null(afterRemoval.Conversation.LastResponseUtc);
         var urgent = await Send("urgent-follow-up", "send_now");
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (true)
@@ -65,16 +67,69 @@ internal static class QueueSqlChecks
         var behavior = await verify.GuildhallBehaviorSettings.SingleAsync(x => x.Id == 1);
         var captured = await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId);
         Assert.Equal(behavior.Revision, JsonDocument.Parse(captured.SettingsSnapshotJson!).RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
-        using (var snapshot = JsonDocument.Parse(captured.SettingsSnapshotJson!))
+        using (var behaviorSnapshot = JsonDocument.Parse(captured.SettingsSnapshotJson!))
         {
-            Assert.Equal(1, snapshot.RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
-            Assert.Contains("capable member of the Guildhall council", snapshot.RootElement.GetProperty("guildhallBehavior").GetString());
+            Assert.Equal(1, behaviorSnapshot.RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
+            Assert.Contains("capable member of the Guildhall council", behaviorSnapshot.RootElement.GetProperty("guildhallBehavior").GetString());
         }
         Assert.Equal("A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == first.RunId)).Status);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == removed.RunId)).Status);
         Assert.Equal(ChatRunStatus.Completed, (await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId)).Status);
         Assert.True((await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId)).TurnNumber < (await verify.ChatRuns.SingleAsync(x => x.Id == second.RunId)).TurnNumber);
+        var snapshot = (await client.GetFromJsonAsync<ConversationResponse>($"/conversations/{conversation.Id}"))!;
+        Assert.NotNull(snapshot.Conversation.LastResponseUtc);
+        Assert.True(snapshot.Messages.Single(x => x.RunId == urgent.RunId && x.Role == "assistant").ResponseDurationSeconds >= 0);
+
+        var promotedConversationResponse = await client.PostAsJsonAsync("/conversations", new CreateConversationRequest("isolated-promote", "model-a"));
+        promotedConversationResponse.EnsureSuccessStatusCode();
+        var promotedConversation = (await promotedConversationResponse.Content.ReadFromJsonAsync<ConversationSummary>())!;
+        async Task<RunAcceptedResponse> SendToPromote(string text)
+        {
+            var currentConversation = (await client.GetFromJsonAsync<ConversationResponse>($"/conversations/{promotedConversation.Id}"))!;
+            var response = await client.PostAsJsonAsync($"/conversations/{promotedConversation.Id}/messages", new CreateMessageRequest(Guid.NewGuid().ToString(), currentConversation.Conversation.Revision, text));
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<RunAcceptedResponse>())!;
+        }
+        var held = await SendToPromote("hold-promote");
+        var runningDeadline = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            await using var state = new GuildhallDbContext(options);
+            if (await state.ChatRuns.AnyAsync(x => x.Id == held.RunId && x.Status == ChatRunStatus.Running)) break;
+            Assert.True(DateTime.UtcNow < runningDeadline, "Promoted test fixture never entered Running.");
+            await Task.Delay(20);
+        }
+        var pendingOne = await SendToPromote("promote-keep-order");
+        var removedGap = await SendToPromote("removed-gap");
+        (await client.PostAsync($"/runs/{removedGap.RunId}/cancel", null)).EnsureSuccessStatusCode();
+        var pendingTwo = await SendToPromote("promote-ahead");
+        var promoteSnapshot = (await client.GetFromJsonAsync<ConversationResponse>($"/conversations/{promotedConversation.Id}"))!;
+        var promote = await client.PostAsJsonAsync($"/runs/{pendingTwo.RunId}/promote", new PromoteRunRequest(promoteSnapshot.Conversation.Revision));
+        promote.EnsureSuccessStatusCode();
+        var stalePromote = await client.PostAsJsonAsync($"/runs/{pendingOne.RunId}/promote", new PromoteRunRequest(promoteSnapshot.Conversation.Revision));
+        Assert.Equal(HttpStatusCode.Conflict, stalePromote.StatusCode);
+        var promoteDrainDeadline = DateTime.UtcNow.AddSeconds(15);
+        while (true)
+        {
+            await using var state = new GuildhallDbContext(options);
+            var pending = await state.ChatRuns.AnyAsync(x => x.ConversationId == promotedConversation.Id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued));
+            if (!pending) break;
+            Assert.True(DateTime.UtcNow < promoteDrainDeadline, "Promoted queue did not drain.");
+            await Task.Delay(30);
+        }
+        var promoteCalls = provider.Calls.Where(x => x.Text.StartsWith("hold-promote", StringComparison.Ordinal) || x.Text.StartsWith("promote-", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(new[] { "hold-promote", "promote-ahead", "promote-keep-order" }, promoteCalls.Select(x => x.Text));
+        await using (var verifyPromote = new GuildhallDbContext(options))
+        {
+            var removedRun = await verifyPromote.ChatRuns.SingleAsync(x => x.Id == removedGap.RunId);
+            Assert.Equal(ChatRunStatus.Cancelled, removedRun.Status);
+            Assert.Equal(3, removedRun.TurnNumber);
+            Assert.Equal(ChatRunStatus.Cancelled, (await verifyPromote.ChatRuns.SingleAsync(x => x.Id == held.RunId)).Status);
+            Assert.Equal(ChatRunStatus.Completed, (await verifyPromote.ChatRuns.SingleAsync(x => x.Id == pendingTwo.RunId)).Status);
+            Assert.Equal(ChatRunStatus.Completed, (await verifyPromote.ChatRuns.SingleAsync(x => x.Id == pendingOne.RunId)).Status);
+            Assert.True((await verifyPromote.ChatRuns.SingleAsync(x => x.Id == pendingTwo.RunId)).TurnNumber < (await verifyPromote.ChatRuns.SingleAsync(x => x.Id == pendingOne.RunId)).TurnNumber);
+        }
         var staleId = Guid.NewGuid();
         verify.ChatRuns.Add(new ChatRun { Id = staleId, ConversationId = conversation.Id, TurnNumber = 6, ClientRequestId = "stale-queued", RequestFingerprint = "stale", ModelId = "model-a", InstructionsSnapshot = "test", Status = ChatRunStatus.Queued, StartedUtc = DateTime.UtcNow.AddMinutes(-1), UpdatedUtc = DateTime.UtcNow.AddMinutes(-1) });
         await verify.SaveChangesAsync();
@@ -106,7 +161,7 @@ internal static class QueueSqlChecks
             var count = Interlocked.Increment(ref concurrent); Peak = Math.Max(Peak, count);
             try
             {
-                if (text == "hold-first") { Started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); }
+                if (text.StartsWith("hold-", StringComparison.Ordinal)) { Started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); }
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"message\":{\"thinking\":\"Private fixture reasoning\"},\"done\":false}\n{\"message\":{\"content\":\"A completed reply.\"},\"done\":true}\n", Encoding.UTF8, "application/x-ndjson") };
             }
             finally { Interlocked.Decrement(ref concurrent); }
