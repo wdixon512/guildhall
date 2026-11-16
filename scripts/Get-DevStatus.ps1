@@ -1,12 +1,12 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param()
+param([switch]$Json)
 . "$PSScriptRoot/Common.ps1"
 
 $currentFingerprint = Get-SourceFingerprint
 $sessionRoot = Join-Path $LocalDirectory 'dev-sessions'
 $sessions = if (Test-Path -LiteralPath $sessionRoot) { Get-ChildItem -LiteralPath $sessionRoot -Directory } else { @() }
-if (-not $sessions) { Write-Output 'No Guildhall dev session is registered.' }
+$sessionReports = @()
 
 foreach ($directory in $sessions) {
     $manifestPath = Join-Path $directory.FullName 'session.json'
@@ -29,7 +29,7 @@ foreach ($directory in $sessions) {
     $gitState = if ($LASTEXITCODE -eq 0) { if ($workingTree.Count) { "dirty ($($workingTree.Count) entries)" } else { 'clean' } } else { 'git status unavailable' }
     $statusIsFresh = $false
     try { $statusIsFresh = ([datetime]::UtcNow - [datetime]::Parse($session.statusCheckedUtc).ToUniversalTime()).TotalSeconds -lt 15 } catch { }
-    [pscustomobject]@{
+    $sessionReports += [pscustomobject]@{
         Session = $session.sessionId
         Mode = $session.mode
         Checkout = $session.checkout
@@ -42,8 +42,8 @@ foreach ($directory in $sessions) {
         SourceFingerprintAtStart = $session.sourceFingerprintAtStart
         CurrentSourceFingerprint = $currentFingerprint
         DesktopBinary = $binaryIdentity
-        Processes = ($processes | ForEach-Object { "$($_.Role)=$($_.PID):$($_.State)" }) -join ', '
-    } | Format-List
+        Processes = @($processes)
+    }
 }
 
 $listenerSummary = foreach ($port in @(43120,1420)) {
@@ -58,5 +58,38 @@ $listenerSummary = foreach ($port in @(43120,1420)) {
         $ownership = if ($isGuildhall) { 'Guildhall checkout' } else { 'unverified owner; left untouched' }
         [pscustomobject]@{ Port = $port; PID = $listener.OwningProcess; Process = if ($process) { $process.ProcessName } else { 'exited' }; Ownership = $ownership }
     }
+}
+$listenerSummary = @($listenerSummary)
+
+if ($Json) {
+    [pscustomobject]@{
+        Sessions = $sessionReports
+        Listeners = $listenerSummary
+        Source = [pscustomobject]@{
+            Checkout = $RepoRoot
+            CurrentSourceFingerprint = $currentFingerprint
+            WorkingTree = if (@(& git -C $RepoRoot status --porcelain --untracked-files=normal 2>$null).Count) { 'dirty' } else { 'clean' }
+        }
+    } | ConvertTo-Json -Depth 8
+    return
+}
+
+if (-not $sessionReports.Count) { Write-Output 'No Guildhall dev session is registered.' }
+foreach ($report in $sessionReports) {
+    [pscustomobject]@{
+        Session = $report.Session
+        Mode = $report.Mode
+        Checkout = $report.Checkout
+        Ports = $report.Ports
+        StartedUtc = $report.StartedUtc
+        Host = $report.Host
+        SQL = $report.SQL
+        StatusCheckedUtc = $report.StatusCheckedUtc
+        WorkingTree = $report.WorkingTree
+        SourceFingerprintAtStart = $report.SourceFingerprintAtStart
+        CurrentSourceFingerprint = $report.CurrentSourceFingerprint
+        DesktopBinary = $report.DesktopBinary
+        Processes = ($report.Processes | ForEach-Object { "$($_.Role)=$($_.PID):$($_.State)" }) -join ', '
+    } | Format-List
 }
 $listenerSummary | Format-Table -AutoSize
