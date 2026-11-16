@@ -227,6 +227,108 @@ describe('connection status', () => {
     expect(screen.getByText('Preserved answer')).toBeInTheDocument();
   });
 
+  it('keeps member drafts while navigating and serializes edits made during a save', async () => {
+    let maren = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Maren rules', revision: 1, isArchived: false };
+    let tarin = { id: 'member-two', name: 'Tarin', role: 'Developer', portraitId: 1, accent: '#536078', instructions: 'Tarin rules', revision: 1, isArchived: false };
+    const profilePatches: { id: string; body: Record<string, unknown> }[] = [];
+    let releaseFirstSave: ((profile: typeof maren) => void) | undefined;
+    vi.mocked(request).mockImplementation(async (_, path, __, init) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'qwen3:1.7b', displayName: 'qwen3:1.7b' }] };
+      if (path === '/agents') return [maren, tarin];
+      if (path.startsWith('/conversations?')) return [];
+      if (path === `/agents/${maren.id}` && init?.method === 'PATCH') {
+        const body = JSON.parse(init.body as string) as Record<string, unknown>;
+        profilePatches.push({ id: maren.id, body });
+        const updated = { ...maren, ...body, revision: maren.revision + 1 };
+        if (profilePatches.length === 1) {
+          return await new Promise<typeof maren>(resolve => { releaseFirstSave = resolve; });
+        }
+        maren = updated;
+        return updated;
+      }
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Select Maren' });
+    fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
+    const instructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
+    fireEvent.change(instructions, { target: { value: 'Maren first draft' } });
+    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'New session with Maren' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Tarin' }));
+    expect(instructions).toHaveValue('Tarin rules');
+    fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
+    expect(instructions).toHaveValue('Maren first draft');
+
+    await waitFor(() => expect(profilePatches).toHaveLength(1), { timeout: 1500 });
+    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
+    fireEvent.change(instructions, { target: { value: 'Maren newer draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Select Tarin' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
+    expect(instructions).toHaveValue('Maren newer draft');
+
+    releaseFirstSave?.({ ...maren, instructions: 'Maren first draft', revision: 2 });
+    await waitFor(() => expect(profilePatches).toHaveLength(2), { timeout: 1500 });
+    expect(profilePatches[1].body).toMatchObject({ instructions: 'Maren newer draft', expectedRevision: 2 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled());
+    expect(instructions).toHaveValue('Maren newer draft');
+  });
+
+  it('keeps a failed member draft and retries it without disabling council navigation', async () => {
+    let profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Maren rules', revision: 1, isArchived: false };
+    let tarin = { id: 'member-two', name: 'Tarin', role: 'Developer', portraitId: 1, accent: '#536078', instructions: 'Tarin rules', revision: 1, isArchived: false };
+    let attempts = 0;
+    vi.mocked(request).mockImplementation(async (_, path, __, init) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'qwen3:1.7b', displayName: 'qwen3:1.7b' }] };
+      if (path === '/agents') return [profile, tarin];
+      if (path.startsWith('/conversations?')) return [];
+      if (path === `/agents/${tarin.id}` && init?.method === 'PATCH') {
+        tarin = { ...tarin, ...JSON.parse(init.body as string), revision: tarin.revision + 1 };
+        return tarin;
+      }
+      if (path === `/agents/${profile.id}` && init?.method === 'PATCH') {
+        attempts++;
+        if (attempts < 3) throw new Error('revision conflict');
+        profile = { ...profile, ...JSON.parse(init.body as string), revision: profile.revision + 1 };
+        return profile;
+      }
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+
+    render(<App />);
+    await screen.findByRole('button', { name: 'Select Maren' });
+    fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
+    const instructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
+    fireEvent.change(instructions, { target: { value: 'Keep this draft after a save conflict' } });
+    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
+    await screen.findByRole('alert');
+    expect(instructions).toHaveValue('Keep this draft after a save conflict');
+    expect(attempts).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Tarin' }));
+    const tarinInstructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
+    fireEvent.change(tarinInstructions, { target: { value: 'Tarin can keep editing too' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
+    expect(instructions).toHaveValue('Keep this draft after a save conflict');
+    expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(attempts).toBe(2), { timeout: 1500 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument());
+    fireEvent.change(instructions, { target: { value: 'Temporary edit' } });
+    fireEvent.change(instructions, { target: { value: 'Keep this draft after a save conflict' } });
+    await waitFor(() => expect(attempts).toBe(3), { timeout: 1500 });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry save' })).toBeNull());
+    expect(instructions).toHaveValue('Keep this draft after a save conflict');
+    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
+  });
+
   it('accepts queued and immediate follow-ups and model changes during generation', async () => {
     let chat = { id: 'busy-chat', title: 'Busy session', selectedModelId: 'qwen3:4b', revision: 1 };
     const messages: { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; attachments: never[] }[] = [{ id: 'active-reply', runId: 'active-run', role: 'assistant', text: '', status: 'Running', turnNumber: 1, attachments: [] }];

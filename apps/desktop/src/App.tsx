@@ -27,6 +27,8 @@ const sessionTabs = [
 ] as const;
 const futureConnections = ['Claude', 'Cursor', 'ChatGPT / OpenAI', 'GitHub', 'Google Drive', 'Gmail'];
 const toMemberIdentity = (profile: AgentProfile): MemberIdentity => ({ name: profile.name, role: profile.role, portrait: profile.portraitId, customPortrait: profile.customPortrait ?? '', accent: profile.accent, instructions: profile.instructions });
+const profileMatchesIdentity = (profile: AgentProfile, identity: MemberIdentity) => identity.name === profile.name && identity.role === profile.role && identity.portrait === profile.portraitId && identity.customPortrait === (profile.customPortrait ?? '') && identity.accent === profile.accent && identity.instructions === profile.instructions;
+const sameIdentity = (left: MemberIdentity, right: MemberIdentity) => left.name === right.name && left.role === right.role && left.portrait === right.portrait && left.customPortrait === right.customPortrait && left.accent === right.accent && left.instructions === right.instructions;
 function storedPaneWidth(key: string, fallback: number, min: number, max: number) {
   try {
     const saved = Number(localStorage.getItem(key));
@@ -97,10 +99,14 @@ export default function App() {
   const anyKnownPendingWork = hasPendingWork || history.some(item => item.hasActiveRun);
   const [readState, setReadState] = useState(() => readWatermarks());
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [profileDrafts, setProfileDrafts] = useState<Record<string, MemberIdentity>>({});
+  const profileDraftsRef = useRef<Record<string, MemberIdentity>>({});
+  const failedProfileDrafts = useRef<Record<string, { draft: MemberIdentity; retry: number }>>({});
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSavingId, setProfileSavingId] = useState<string | null>(null);
   const [profileError, setProfileError] = useState('');
-  const [profileRetry, setProfileRetry] = useState(0);
+  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
+  const [profileRetryById, setProfileRetryById] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
@@ -377,32 +383,71 @@ export default function App() {
       if (controller.signal.aborted) return;
       setProfiles(loaded);
       const firstActive = loaded.find(profile => !profile.isArchived);
-      if (!conversation && !selectedAgentId && firstActive) { setSelectedAgentId(firstActive.id); setIdentity(toMemberIdentity(firstActive)); }
+      if (!conversation && !selectedAgentId && firstActive) { setSelectedAgentId(firstActive.id); setIdentity(profileDraftsRef.current[firstActive.id] ?? toMemberIdentity(firstActive)); }
     }).catch(() => { if (!controller.signal.aborted) setProfileError('Could not load guild members. Check the approved database update and refresh.'); });
     return () => controller.abort();
   }, [database?.status]);
 
   const activeAgentId = conversation?.agent?.id ?? selectedAgentId;
   const activeProfile = profiles.find(profile => profile.id === activeAgentId) ?? conversation?.agent;
-  const profileDirty = !!activeProfile && (identity.name !== activeProfile.name || identity.role !== activeProfile.role || identity.portrait !== activeProfile.portraitId || identity.customPortrait !== (activeProfile.customPortrait ?? '') || identity.accent !== activeProfile.accent || identity.instructions !== activeProfile.instructions);
+  const profileSaving = profileSavingId === activeProfile?.id;
+  const profileDirty = !!activeProfile && !!profileDrafts[activeProfile.id] && !profileMatchesIdentity(activeProfile, profileDrafts[activeProfile.id]);
+  const profileHasPendingChanges = (profileId: string) => {
+    const profile = profiles.find(item => item.id === profileId) ?? (conversation?.agent?.id === profileId ? conversation.agent : undefined);
+    const draft = profileDrafts[profileId];
+    return !!profile && (!!draft && !profileMatchesIdentity(profile, draft) || profileSavingId === profileId);
+  };
+  const profileErrorForActive = activeProfile ? profileErrors[activeProfile.id] || profileError : profileError;
+  const updateMemberIdentity = (next: MemberIdentity) => {
+    setProfileError('');
+    setIdentity(next);
+    if (!activeProfile) return;
+    delete failedProfileDrafts.current[activeProfile.id];
+    setProfileErrors(current => { const remaining = { ...current }; delete remaining[activeProfile.id]; return remaining; });
+    const updated = { ...profileDraftsRef.current, [activeProfile.id]: next };
+    profileDraftsRef.current = updated;
+    setProfileDrafts(updated);
+  };
+  const identityForProfile = (profile: AgentProfile) => profileDraftsRef.current[profile.id] ?? toMemberIdentity(profile);
   useEffect(() => {
-    if (database?.status !== 'ready' || !configuration.current || !activeProfile || profileMutation.current) return;
-    if (!profileDirty) return;
-    const profileId = activeProfile.id;
-    let cancelled = false;
+    if (database?.status !== 'ready' || !configuration.current || profileMutation.current) return;
+    const pending = profiles.flatMap(profile => {
+      const draft = profileDrafts[profile.id];
+      const failed = failedProfileDrafts.current[profile.id];
+      const failedAtCurrentRevision = failed && sameIdentity(failed.draft, draft ?? toMemberIdentity(profile)) && failed.retry === (profileRetryById[profile.id] ?? 0);
+      return draft && !profileMatchesIdentity(profile, draft) && !failedAtCurrentRevision ? [{ profile, draft }] : [];
+    });
+    if (!pending.length) return;
     const timer = window.setTimeout(async () => {
       if (profileMutation.current) return;
-      profileMutation.current = true; setProfileSaving(true); setProfileError('');
+      profileMutation.current = true;
+      setProfileError('');
       try {
-        const updated = await request(configuration.current!, `/agents/${profileId}`, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: identity.name, role: identity.role, portraitId: identity.portrait, customPortrait: identity.customPortrait || null, accent: identity.accent, instructions: identity.instructions, defaultModelId: activeProfile.defaultModelId, expectedRevision: activeProfile.revision }) }) as AgentProfile;
-        if (cancelled) return;
-        setProfiles(items => items.map(item => item.id === profileId ? updated : item));
-        setConversation(current => current?.agent?.id === profileId ? { ...current, agent: updated } : current);
-      } catch { if (!cancelled) setProfileError('Could not save this guild member. Refresh before making further changes.'); }
-      finally { profileMutation.current = false; if (!cancelled) setProfileSaving(false); }
+        for (const { profile, draft } of pending) {
+          setProfileSavingId(profile.id);
+          try {
+            const updated = await request(configuration.current!, `/agents/${profile.id}`, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: draft.name, role: draft.role, portraitId: draft.portrait, customPortrait: draft.customPortrait || null, accent: draft.accent, instructions: draft.instructions, defaultModelId: profile.defaultModelId, expectedRevision: profile.revision }) }) as AgentProfile;
+            delete failedProfileDrafts.current[profile.id];
+            setProfileErrors(current => { const remaining = { ...current }; delete remaining[profile.id]; return remaining; });
+            setProfiles(items => items.map(item => item.id === profile.id ? updated : item));
+            setConversation(current => current?.agent?.id === profile.id ? { ...current, agent: updated } : current);
+            setProfileDrafts(current => {
+              const latest = current[profile.id];
+              if (!latest || !sameIdentity(latest, draft)) return current;
+              const remaining = { ...current };
+              delete remaining[profile.id];
+              profileDraftsRef.current = remaining;
+              return remaining;
+            });
+          } catch {
+            failedProfileDrafts.current[profile.id] = { draft, retry: profileRetryById[profile.id] ?? 0 };
+            setProfileErrors(current => ({ ...current, [profile.id]: 'Could not save this guild member. The draft is kept; retry the save before sending.' }));
+          }
+        }
+      } finally { profileMutation.current = false; setProfileSavingId(null); }
     }, 450);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [identity, activeProfile, database?.status, profileDirty, profileRetry]);
+    return () => clearTimeout(timer);
+  }, [profileDrafts, profiles, database?.status, profileRetryById, profileSavingId]);
 
   async function openSavedChat(id: string) {
     if (!configuration.current || chatOperation.current || hasDraft) return;
@@ -412,7 +457,7 @@ export default function App() {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
       setConversation(details); setChosenModel(details.conversation.selectedModelId ?? '');
       markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
-      if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(toMemberIdentity(details.agent)); }
+      if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       setConversationMenu(null);
       if (window.innerWidth < 900) setSidebarCollapsed(true);
       setHistory(items => items.map(item => item.id === id ? details.conversation : item));
@@ -540,13 +585,13 @@ export default function App() {
     chatOperation.current = true; setChatBusy(true); setProfileError('');
     try {
       const profile = await request(configuration.current, '/agents', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New guild member', role: 'Steward', portraitId: 0, customPortrait: null, accent: '#71465f', instructions: 'You are a helpful local assistant.', defaultModelId: chosenModel || null }) }) as AgentProfile;
-      setProfiles(items => [...items, profile]); setSelectedAgentId(profile.id); setIdentity(toMemberIdentity(profile)); setConversation(null); setChosenModel(profile.defaultModelId ?? chosenModel); setShowMember(true);
+      setProfiles(items => [...items, profile]); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setConversation(null); setChosenModel(profile.defaultModelId ?? chosenModel); setShowMember(true);
     } catch { setProfileError('Could not add a guild member. Check the local database permissions.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
   async function setGuildMemberArchived(profile: AgentProfile, isArchived: boolean) {
-    if (!configuration.current || database?.status !== 'ready' || chatOperation.current || profileDirty || profileSaving) return;
+    if (!configuration.current || database?.status !== 'ready' || chatOperation.current || profileHasPendingChanges(profile.id)) return;
     chatOperation.current = true; setChatBusy(true); setArchiveMemberError('');
     try {
       const updated = await request(configuration.current, `/agents/${profile.id}/lifecycle`, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isArchived, expectedRevision: profile.revision }) }) as AgentProfile;
@@ -554,18 +599,18 @@ export default function App() {
       setConversation(current => current?.agent?.id === updated.id ? { ...current, agent: updated } : current);
       setShowArchivedMembers(true);
       requestAnimationFrame(() => document.getElementById(`member-actions-${updated.id}`)?.focus());
-      if (!isArchived && selectedAgentId === profile.id && !conversation) { setIdentity(toMemberIdentity(updated)); }
+       if (!isArchived && selectedAgentId === profile.id && !conversation) { setIdentity(identityForProfile(updated)); }
       if (isArchived && selectedAgentId === profile.id && !conversation) {
         const nextProfile = profiles.find(item => item.id !== profile.id && !item.isArchived);
         setSelectedAgentId(nextProfile?.id ?? null);
-        if (nextProfile) { setIdentity(toMemberIdentity(nextProfile)); setChosenModel(nextProfile.defaultModelId ?? chosenModel); }
+         if (nextProfile) { setIdentity(identityForProfile(nextProfile)); setChosenModel(nextProfile.defaultModelId ?? chosenModel); }
       }
     } catch { setArchiveMemberError('Could not update this guild member. Wait for running or queued replies to finish, then try again. If this member changed elsewhere, reopen Guildhall.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
 
   async function deleteGuildMember(profile: AgentProfile) {
-    if (!configuration.current || chatOperation.current || hasDraft || profileDirty || profileSaving) return;
+    if (!configuration.current || chatOperation.current || hasDraft || profileHasPendingChanges(profile.id)) return;
     chatOperation.current = true; setChatBusy(true); setDeleteMemberError('');
     try {
       await request(configuration.current, `/agents/${profile.id}?expectedRevision=${profile.revision}`, new AbortController().signal, { method: 'DELETE' });
@@ -575,7 +620,7 @@ export default function App() {
       const next = profiles.find(item => item.id !== profile.id && !item.isArchived);
       if (selectedAgentId === profile.id || conversation?.agent?.id === profile.id) {
         setSelectedAgentId(next?.id ?? null);
-        if (next) { setIdentity(toMemberIdentity(next)); setChosenModel(next.defaultModelId ?? chosenModel); }
+         if (next) { setIdentity(identityForProfile(next)); setChosenModel(next.defaultModelId ?? chosenModel); }
       }
       setMemberMenuId(null); setDeleteMemberTarget(null);
       requestAnimationFrame(() => document.getElementById(`member-actions-${next?.id ?? ''}`)?.focus());
@@ -596,7 +641,7 @@ export default function App() {
       const details = await request(configuration.current, `/conversations/${item.id}`, new AbortController().signal) as ConversationDetails;
       setConversation(details);
       setChosenModel(details.conversation.selectedModelId ?? '');
-      if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(toMemberIdentity(details.agent)); }
+       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       if (window.innerWidth < 900) setSidebarCollapsed(true);
     } catch { setChatError('Could not open chat. Check the host and database, then try again.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
@@ -614,6 +659,7 @@ export default function App() {
   }
   async function sendMessage() {
     if (!conversation && (!activeProfile || activeProfile.isArchived)) return;
+    if (activeProfile && profileHasPendingChanges(activeProfile.id)) { setChatError('This member is still saving. Wait for the save to finish before sending.'); return; }
     if (queuedCount >= 8 && !editingQueuedRunId) { setChatError('Eight messages are already queued. Remove one or wait for a reply.'); return; }
     const modelId = conversation?.conversation.selectedModelId ?? chosenModel;
     if (!configuration.current || database?.status !== 'ready' || (!draft.trim() && selectedFiles.length === 0) || chatOperation.current || !modelId || !models?.models.some(model => model.id === modelId)) return;
@@ -629,7 +675,7 @@ export default function App() {
         }) as Conversation;
         target = await request(configuration.current, `/conversations/${created.id}`, new AbortController().signal) as ConversationDetails;
         setConversation(target);
-        if (target.agent) { setSelectedAgentId(target.agent.id); setIdentity(toMemberIdentity(target.agent)); }
+         if (target.agent) { setSelectedAgentId(target.agent.id); setIdentity(identityForProfile(target.agent)); }
         setHistory(items => [created, ...items.filter(item => item.id !== created.id)]);
       }
       target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
@@ -738,7 +784,7 @@ export default function App() {
     const activeRun = !!item.hasActiveRun || (conversation?.conversation.id === item.id && running);
     const unread = isUnread(item.lastResponseUtc, readState[item.id]);
     return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} key={item.id}>
-      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
+      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || hasDraft || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
       <button className="conversation-menu-toggle icon-button" aria-label={`Actions for ${title}`} aria-expanded={conversationMenu === item.id} onClick={() => setConversationMenu(current => current === item.id ? null : item.id)}>···</button>
       <div className={`conversation-actions ${conversationMenu === item.id ? 'expanded' : ''}`}>
         <button aria-label={`Rename ${title}`} title="Rename conversation" disabled={chatBusy || hasDraft} onClick={() => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}><Icon name="edit" size={16} /><span>Rename</span></button>
@@ -753,8 +799,8 @@ export default function App() {
       if (event.key === 'Escape' && memberMenuId === profile.id) { event.preventDefault(); event.stopPropagation(); setMemberMenuId(null); memberReturnFocus.current?.focus(); }
       if (event.key === 'Tab') setMemberMenuId(null);
     }}>
-      <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy || hasDraft || profileDirty || profileSaving} onClick={() => { setConversation(null); setSelectedAgentId(profile.id); setIdentity(toMemberIdentity(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
-      {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || hasDraft || profileDirty || profileSaving || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
+      <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy || hasDraft} onClick={() => { setConversation(null); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
+      {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || hasDraft || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
       <button id={`member-actions-${profile.id}`} className="icon-button member-menu-toggle" aria-label={`Member actions for ${profile.name}`} aria-haspopup="menu" aria-expanded={memberMenuId === profile.id} aria-controls={memberMenuId === profile.id ? `member-menu-${profile.id}` : undefined} onClick={event => { memberReturnFocus.current = event.currentTarget; setMemberMenuId(value => value === profile.id ? null : profile.id); }}>···</button>
       {memberMenuId === profile.id && createPortal(<div ref={memberMenuElement} data-member-menu="" style={memberMenuPosition ?? undefined} className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`} onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); setMemberMenuId(null); memberReturnFocus.current?.focus(); return; }
@@ -777,8 +823,8 @@ export default function App() {
           actions[next]?.focus();
         }
       }}>
-        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
-        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || hasDraft || profileDirty || profileSaving || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
+        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || hasDraft || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
+        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || hasDraft || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
       </div>, document.body)}
     </div>
     {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
@@ -843,7 +889,7 @@ export default function App() {
       </label><span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
       <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line · Clear your draft to change chats' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
     </section></div>
-    {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }} onChange={setIdentity} onClose={() => setShowMember(false)} storageError={profileError || storageError} saving={profileSaving} onRetrySave={() => setProfileRetry(value => value + 1)} retryAvailable={profileDirty && !!profileError} />}
+    {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }} onChange={updateMemberIdentity} onClose={() => setShowMember(false)} storageError={profileErrorForActive || storageError} saving={profileSaving} onRetrySave={() => { if (!activeProfile) return; const profileId = activeProfile.id; setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; }); setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 })); }} retryAvailable={profileDirty && !!profileErrorForActive} />}
     {toolsPanel.present && <aside id="session-tools-pane" className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools"><PaneResizeHandle className="right-pane-resizer tools-resizer" label="Resize Session Tools pane" controls="session-tools-pane" value={Math.min(toolsPaneWidth, rightPaneResizeMax)} min={240} max={rightPaneResizeMax} direction={-1} onResize={setToolsPaneWidth} /><div className="pane-header"><span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span><button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button></div><div className="session-tabs" role="group" aria-label="Session tools">{sessionTabs.map(tab => <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>{tab.label}<small>{tab.status}</small></button>)}</div><section key={previewTab} className="session-placeholder"><span className="session-placeholder-icon">{previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'context' ? '◉' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}</span><span className="eyebrow">{activeSessionPanel.title}</span><p>{activeSessionPanel.detail}</p><small>Preview only · This panel does not run commands or connect external services.</small></section></aside>}
     </div>
     {deleteMemberTarget && <div className="dialog-backdrop"><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-member-title" aria-describedby="delete-member-description"><h2 id="delete-member-title">Permanently delete {deleteMemberTarget.name}?</h2><p id="delete-member-description">This permanently deletes <strong>{deleteMemberTarget.name}</strong>, all of their saved sessions, messages, and attachments. This cannot be undone. Existing SQL backups may still contain copies. Replies must finish before deletion.</p>{deleteMemberError && <p className="chat-error" role="alert">{deleteMemberError}</p>}<div><button ref={deleteMemberCancel} disabled={chatBusy} onClick={() => { setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); }}>Cancel</button><button className="danger-button" disabled={chatBusy} onClick={() => void deleteGuildMember(deleteMemberTarget)}>{chatBusy ? 'Deleting…' : 'Delete member and sessions'}</button></div></section></div>}
