@@ -33,6 +33,8 @@ Official references: [Ollama thinking controls](https://docs.ollama.com/capabili
 
 ## Verification and owner QC
 
+Warm-model option: `Start-Dev.ps1 -KeepModelWarmSeconds 300` now requests five minutes of model residency after a reply. Default 0 still unloads; the bounded maximum is 900 seconds. Direct hosts read `GUILDHALL_MODEL_KEEP_ALIVE_SECONDS`. Fake-provider/isolated SQL coverage checks both 0 and 300 in actual HTTP request payloads. Real RAM/VRAM and load-time measurements remain pending; retention consumes memory and Ollama can evict a model under pressure. This option takes effect on a new host launch, not the existing running session.
+
 Backend verification: `dotnet test tests/Guildhall.AgentHost.Tests -c Release` with the approved isolated SQL test connection. Tests exercise captured behavior/version in SQL, actual fake-provider system messages, thinking disabled, and exclusion of returned reasoning from saved answers. No live model benchmark or UI render was performed.
 
 After these changes are integrated into the active checkout, at the next agreed restart:

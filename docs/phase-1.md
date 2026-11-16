@@ -4,6 +4,8 @@ Status: implementation authorized, November 15, 2026. Work is constrained to the
 
 ## Outcome
 
+Model retention follow-up: an opt-in `-KeepModelWarmSeconds 300` launcher setting requests five-minute retention, bounded to 0–900 seconds with default 0. Backend payload checks pass; live resource/performance QC remains part of C16/Q06.
+
 November 16 quality follow-up: [agent quality and performance](agent-quality-and-performance.md) records SQL memory ownership, the captured Guildhall behavior policy and the thinking-off backend change. C16/Q06 must measure local model speed and answer quality; B04/Q06 must fix per-keystroke council disabling without losing drafts. B05/B06 memory and later tools/delegation retain their existing order. Backend code is prepared on `codex/backend`; live inference and frontend QC are still pending.
 
 Open Guildhall, choose a locally installed model for a guild member, send a message, see the answer arrive, cancel if needed, close/reopen the app, and continue the same session. Export the saved session in a documented format. No cloud account or external service is required after local dependencies/model are installed.

@@ -7,6 +7,7 @@ using System.Text.Json;
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -15,10 +16,10 @@ namespace Guildhall.AgentHost.Tests;
 
 internal static class QueueSqlChecks
 {
-    public static async Task VerifyAsync(DbContextOptions<GuildhallDbContext> options)
+    public static async Task VerifyAsync(DbContextOptions<GuildhallDbContext> options, int keepAliveSeconds = 0)
     {
-        var provider = new Provider();
-        await using var app = new ApiFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services => {
+        var provider = new Provider(keepAliveSeconds);
+        await using var app = new ApiFactory().WithWebHostBuilder(builder => builder.UseSetting("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS", keepAliveSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)).ConfigureServices(services => {
             services.RemoveAll<IDbContextFactory<GuildhallDbContext>>();
             services.AddSingleton<IDbContextFactory<GuildhallDbContext>>(new Factory(options));
             services.RemoveAll<IHttpClientFactory>(); services.AddSingleton<IHttpClientFactory>(provider);
@@ -83,7 +84,7 @@ internal static class QueueSqlChecks
     private sealed class Factory(DbContextOptions<GuildhallDbContext> options) : IDbContextFactory<GuildhallDbContext>
     { public GuildhallDbContext CreateDbContext() => new(options); }
 
-    private sealed class Provider : HttpMessageHandler, IHttpClientFactory
+    private sealed class Provider(int keepAliveSeconds) : HttpMessageHandler, IHttpClientFactory
     {
         public ConcurrentQueue<(string Text, string Model, string Context)> Calls { get; } = new();
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -94,7 +95,7 @@ internal static class QueueSqlChecks
         {
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
             Assert.False(json.RootElement.GetProperty("think").GetBoolean());
-            Assert.Equal(0, json.RootElement.GetProperty("keep_alive").GetInt32());
+            Assert.Equal(Math.Clamp(keepAliveSeconds, 0, 900), json.RootElement.GetProperty("keep_alive").GetInt32());
             var messages = json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
             Assert.Equal("system", messages[0].GetProperty("role").GetString());
             Assert.StartsWith(Chat.GuildhallBehavior.Instructions, messages[0].GetProperty("content").GetString());

@@ -135,6 +135,7 @@ public sealed class PersistenceTests
                 await scoped.ExecuteNonQueryAsync();
             }
             await QueueSqlChecks.VerifyAsync(options);
+            await QueueSqlChecks.VerifyAsync(options, 300);
             await AgentProfileSqlChecks.VerifyAsync(options);
             // Exercise EF's migration executor against a deliberately failing transactional batch.
             await using (var db = new GuildhallDbContext(options))

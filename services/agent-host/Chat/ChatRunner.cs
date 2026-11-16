@@ -156,7 +156,8 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
             if (!useGpu) options["num_gpu"] = 0;
             // Request-local settings: do not change the shared Ollama service or other clients.
             // Avoid spending CPU on a hidden reasoning stream before the visible answer.
-            var payload = new { model = run.ModelId, stream = true, messages, options, think = false, keep_alive = 0 };
+            var keepAliveSeconds = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
+            var payload = new { model = run.ModelId, stream = true, messages, options, think = false, keep_alive = keepAliveSeconds };
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat") { Content = JsonContent.Create(payload) };
             using var response = await clients.CreateClient("ollama-chat").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();

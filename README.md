@@ -52,6 +52,8 @@ Guildhall inference defaults to CPU only (4 threads, 4096 context) to leave the 
 
 To build embedded assets and run the native desktop without a frontend development server:
 
+To keep a model loaded between messages, use `./scripts/Start-Dev.ps1 -KeepModelWarmSeconds 300` for five minutes after a request; optionally add `-UseGpu`. The supported range is 0–900 seconds; 0 retains the unload-after-reply default. Direct host launches use `GUILDHALL_MODEL_KEEP_ALIVE_SECONDS` (clamped to that range). This request-local setting keeps RAM/VRAM occupied during retention and does not guarantee residency under Ollama memory pressure or another client's requests. At an agreed restart, launch once, send two short messages with the same model within five minutes, and inspect `ollama ps` between messages. No automatic inference or permanent warming loop is added.
+
 ```powershell
 npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle
 ./scripts/Start-Dev.ps1 -BuiltDesktop
