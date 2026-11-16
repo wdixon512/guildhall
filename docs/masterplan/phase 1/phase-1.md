@@ -160,21 +160,13 @@ Each task is one reviewable change. Start with its acceptance test and limit the
 - Verify: `dotnet test tests/Guildhall.AgentHost.Tests --filter ChatExportSql`.
 - Model: lightweight.
 
-### C15 — Native user-initiated export save
+### C15 — Native user-initiated export save *(Deferred to a later phase by owner direction)*
 
-- Depends C14/C11. Files: one UI action and API helper/tests; Rust changes only if the real download path proves they are necessary.
-- Fetch with the bearer header, create a Blob/download with a sanitized filename, and release object URLs. Try the existing webview capability first; do not add broad filesystem access.
-- Accept: an actual Tauri window saves a readable JSON export to a user-chosen/normal download location; cancellation/failure is clear; the saved file contains no token. Review a narrowly scoped save capability only if required by verified WebView behavior.
-- Verify: focused frontend export tests plus native save/open inspection; a mocked anchor click alone is insufficient.
-- Model: lightweight.
+- **Status:** Deferred alongside C16/Q06. Do not block Phase 1 completion on native export UI/save verification.
 
-### C16 — Approved local upgrade, model checkpoint, and final acceptance
+### C16 — Approved local upgrade, model checkpoint, and final acceptance *(Deferred to a later phase by owner direction)*
 
-- Depends C01–C15 and separate approvals for concrete database/backup/grant changes and any model download. Files: setup/verification scripts and records; fix only Phase 1 defects.
-- Present generated SQL/grants/backup targets before execution. Validate a restored scratch database first, then apply the approved additive development upgrade. Select a modest useful local model and tested context/output settings; the installed tiny model may test plumbing but cannot establish answer quality.
-- Accept: all automated/native checks below pass; record actual output, cancellations, restart behavior, and approximate resource/latency observations without inventing performance guarantees. No extra provider/tools/infrastructure work is included.
-- Verify: existing `Verify.ps1 -IncludeSql`, Phase 0 smoke, proposed `Smoke-Chat.ps1 -UseLocalModel`, native embedded build and the checklist below. Live smoke is explicit opt-in; normal verification never triggers inference/downloads.
-- Model: lightweight for commands/documentation; stronger reasoning only for an identified cross-boundary failure.
+- **Status:** Deferred by owner direction (November 16, 2026). Native JSON export verification, isolated SQL backup/restore verification (tracked under Phase 5), and formal live local-model speed/quality benchmarks (CPU L3-cache/DDR5 vs. GPU VRAM offload + `KeepModelWarmSeconds`, tracked under Phase 8) are moved out of the Phase 1 gate.
 
 ### C17 — Conversation archive, restore, and permanent delete (owner-requested)
 

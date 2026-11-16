@@ -87,3 +87,4 @@ Additional November 16 owner follow-ups ([docs/2026-11-16.md](../2026-11-16.md))
 - Make Markdown links clickable in chat, opening safely in the OS-configured default browser.
 - Add one-click copy buttons to formatted terminal/code blocks.
 - Organize `docs/` under `docs/masterplan/` (`phase 0/`, `phase 1/`) and organize `scripts/` into `database/`, `startup/`, `sql/`, and `misc/`, with a spend-conscious CI test pipeline.
+- **Deferral of C15 / C16 / Q06 (Native JSON Export, SQL Backup/Restore Verification, & Live Model Benchmarks):** By owner direction (November 16, 2026), native JSON export verification (C15/C16), isolated SQL backup/restore verification (tracked in Phase 5), and formal live local-model speed/quality benchmarks (`CPU` vs. `GPU` / `KeepModelWarmSeconds`, tracked in Phase 8) are deferred to later phases and do not gate Phase 1 completion.
