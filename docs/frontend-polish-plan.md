@@ -1,6 +1,6 @@
 # Phase 1 frontend polish — November 16, 2026
 
-Owner request: improve council/session hierarchy, response feedback, queue density and desktop layout; add member deletion as well as archival. Implementation belongs to `G:/repos/guildhall-frontend`, branch `codex/frontend`.
+Owner request: improve council/session hierarchy, response feedback, queue density and desktop layout; add member deletion as well as archival. The original polish batch was prepared on `codex/frontend`; follow-up layout and queue editing work is on `codex/waiting-status-copy` in `G:/repos/guildhall-frontend`.
 
 ## Roadmap and boundaries
 
@@ -59,7 +59,7 @@ Close any existing development app through its owner before relaunching; the lau
 1. Select a Developer and then a Jester/Image member. New-session suggestion buttons should differ, fill an editable draft, and focus the composer without sending. Clear the draft between members.
 2. Finish a reply in one session while viewing another. The unseen response gets one green dot and stronger title. Open that session: it becomes read and quieter. Member portraits stay on headings; session rows use small chat icons and connector lines.
 3. Check the response-time blip above a completed reply; it includes queue wait. While awaiting first text, short waiting phrases cycle without pretending tool work. Reduced-motion mode shows a static phrase.
-4. Queue two follow-ups. Only compact composer-adjacent rows appear for pending turns. Left icons promote/remove the existing queued message, with no duplicate user turn. Attachment access is available from the compact files disclosure. An error leaves saved content intact.
+4. Queue two follow-ups. Only compact composer-adjacent rows appear for pending turns. Left icons promote/remove the existing queued message, with no duplicate user turn. Attachment access is available from the compact files disclosure. Edit a queued item, confirm its text and attachments load into the composer, change the text, and resubmit; the old queued item should be replaced rather than duplicated. Cancel editing and confirm the original remains queued. If the reply starts before replacement, the edit should be refused without losing the draft/files. A replacement failure after cancellation should leave the draft/files available with an actionable message.
 5. Archive and restore a member, confirming sessions are retained. For destructive QC use a deliberately disposable member/session only: Cancel member deletion once, then confirm its irreversible member/session/message/attachment removal. Other members remain. Never delete valuable history just to test.
 6. Resize through 420/620/900/1280/1920px and change display scale through 80/100/125/150%. Check both collapsed and expanded sidebar, member/tools panels, long draft, attachment and queued messages. The composer remains reachable, paperclip is intact, and horizontal scrolling is absent; code and tables wrap to fit. Clock and shield navigation retain accurate labels. Session tools remains visible and Open chat is absent.
 7. Tab to member actions, use arrows/Home/End across Archive and Delete, Enter to open confirmation, Escape to cancel, and confirm focus returns. Confirm destructive controls are unavailable or refused while replies are active/queued.
@@ -79,6 +79,10 @@ PR preparation also added a SQL regression for promoting past a removed queued t
 The owner reported a response-time label that sat beside the member identity, an oversized member lifecycle menu, a composer jump after sending at narrow widths, and horizontal overflow in the member panel. The response-time label now sits right-aligned immediately above its reply. Member actions use a compact, keyboard-accessible popover constrained to the sidebar and positioned clear of its footer. The composer reserves its narrow-window toolbar rows and footer space before a run starts. The Guild member pane and formatted code/tables wrap without horizontal scrolling.
 
 Updated checks passed: frontend typecheck, 37 Vitest tests, production build, and the local Playwright responsive fixture at 420/620/900/1280/1920px and 80/100/125/150% scale. The fixture checks member-panel scroll width, compact member menu bounds, stable composer geometry with and without queued controls, and no browser errors. This is deterministic browser-fixture evidence; native/live-host interaction remains separate.
+
+### Queued message editing — November 16, 2026
+
+Queued rows now include Edit. Editing restores saved text and attachments to the composer. Because the host has no queued-run edit endpoint, replacement cancels the original queued run and submits a new one; if cancellation succeeds but replacement fails, the draft and downloaded files stay in the composer and the UI explains that the old queue entry was removed. The reviewer exercised successful replacement, cancellation, a reply starting during edit, and replacement failure. Frontend typecheck, 37 tests, production build and `git diff --check` passed. Native/live-host verification remains separate.
 
 Owner functional QC after the changes are merged:
 
