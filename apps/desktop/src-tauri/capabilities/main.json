@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Session bootstrap only; no filesystem, shell, or remote IPC access.",
+  "windows": ["main"],
+  "permissions": ["allow-bootstrap"]
+}

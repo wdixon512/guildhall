@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/services/" />
+  <Folder Name="/services/agent-host/">
+    <Project Path="services/agent-host/Guildhall.AgentHost.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Guildhall.AgentHost.Tests/Guildhall.AgentHost.Tests.csproj" />
+  </Folder>
+</Solution>

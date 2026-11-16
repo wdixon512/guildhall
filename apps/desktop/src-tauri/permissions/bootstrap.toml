@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-bootstrap"
+description = "Read session configuration for the main desktop window."
+commands.allow = ["bootstrap"]
