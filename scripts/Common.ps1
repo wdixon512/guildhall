@@ -3,7 +3,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $LocalDirectory = Join-Path $RepoRoot '.local'
-$CredentialPath = Join-Path $LocalDirectory 'runtime.credential.xml'
+$LegacyCredentialPath = Join-Path $LocalDirectory 'runtime.credential.xml'
+$SharedCredentialDirectory = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Guildhall/dev' } else { Join-Path $HOME '.local/share/Guildhall/dev' }
+$SharedCredentialPath = Join-Path $SharedCredentialDirectory 'runtime.credential.xml'
+# Prefer one user-local credential across worktrees, while preserving existing checkout-local setups.
+$CredentialPath = if (Test-Path -LiteralPath $SharedCredentialPath) { $SharedCredentialPath } elseif (Test-Path -LiteralPath $LegacyCredentialPath) { $LegacyCredentialPath } else { $SharedCredentialPath }
 
 function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
