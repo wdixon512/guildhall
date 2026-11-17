@@ -1,15 +1,19 @@
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Guildhall.AgentHost.Chat;
 using Microsoft.Extensions.Options;
 
 namespace Guildhall.AgentHost.Providers.Ollama;
 
-public sealed class OllamaBackingEngine(
+public sealed partial class OllamaBackingEngine(
     IHttpClientFactory clients,
     IConfiguration configuration,
     IOptionsMonitor<CrossTurnBudgetOptions> budgetOptions) : IBackingEngine
 {
+    [GeneratedRegex(@"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", RegexOptions.Compiled)]
+    private static partial Regex XmlToolCallRegex();
     public string ProviderId => "ollama";
     public string EngineKind => BackingEngineKinds.Local;
 
@@ -117,6 +121,8 @@ public sealed class OllamaBackingEngine(
         using var reader = new StreamReader(stream);
         var completed = false;
         var inThinking = false;
+        var sawStructuredToolCalls = false;
+        var rawAccumulated = new StringBuilder();
         int? inputTokens = null;
         int? outputTokens = null;
 
@@ -133,6 +139,7 @@ public sealed class OllamaBackingEngine(
             {
                 if (message.TryGetProperty("thinking", out var thinkingProp) && thinkingProp.GetString() is { Length: > 0 } thinkingChunk)
                 {
+                    rawAccumulated.Append(thinkingChunk);
                     var prefix = inThinking ? string.Empty : "<think>";
                     inThinking = true;
                     await onChunk(new BackingEngineChunk(DeltaText: prefix + thinkingChunk), cancellationToken);
@@ -140,6 +147,7 @@ public sealed class OllamaBackingEngine(
 
                 if (message.TryGetProperty("content", out var content) && content.GetString() is { Length: > 0 } delta)
                 {
+                    rawAccumulated.Append(delta);
                     var prefix = inThinking ? "</think>" : string.Empty;
                     inThinking = false;
                     await onChunk(new BackingEngineChunk(DeltaText: prefix + delta), cancellationToken);
@@ -159,7 +167,10 @@ public sealed class OllamaBackingEngine(
                         calls.Add(new BackingEngineToolCall(Guid.NewGuid().ToString("N"), name, args));
                     }
                     if (calls.Count > 0)
+                    {
+                        sawStructuredToolCalls = true;
                         await onChunk(new BackingEngineChunk(ToolCalls: calls), cancellationToken);
+                    }
                 }
             }
 
@@ -170,6 +181,11 @@ public sealed class OllamaBackingEngine(
                     inThinking = false;
                     await onChunk(new BackingEngineChunk(DeltaText: "</think>"), cancellationToken);
                 }
+
+                IReadOnlyList<BackingEngineToolCall>? fallbackCalls = null;
+                if (!sawStructuredToolCalls && request.Tools is { Count: > 0 } && rawAccumulated.Length > 0)
+                    fallbackCalls = ExtractXmlToolCalls(rawAccumulated.ToString());
+
                 if (json.RootElement.TryGetProperty("prompt_eval_count", out var promptCount) && promptCount.TryGetInt32(out var inTok))
                     inputTokens = inTok;
                 if (json.RootElement.TryGetProperty("eval_count", out var evalCount) && evalCount.TryGetInt32(out var outTok))
@@ -178,12 +194,40 @@ public sealed class OllamaBackingEngine(
                 completed = true;
                 await onChunk(new BackingEngineChunk(
                     Usage: new BackingEngineUsage(inputTokens, outputTokens, null, CostSources.LocalOllama),
-                    IsComplete: true), cancellationToken);
+                    IsComplete: true,
+                    ToolCalls: fallbackCalls), cancellationToken);
                 break;
             }
         }
 
         if (!completed)
             throw new BackingEngineException("invalid_provider_response", "Ollama stream ended before completion.");
+    }
+
+    public static IReadOnlyList<BackingEngineToolCall>? ExtractXmlToolCalls(string text)
+    {
+        var matches = XmlToolCallRegex().Matches(text);
+        if (matches.Count == 0) return null;
+
+        var calls = new List<BackingEngineToolCall>();
+        foreach (Match match in matches)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(match.Groups[1].Value);
+                var name = doc.RootElement.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var args = doc.RootElement.TryGetProperty("arguments", out var aEl)
+                    ? aEl.Clone()
+                    : JsonDocument.Parse("{}").RootElement.Clone();
+                calls.Add(new BackingEngineToolCall(Guid.NewGuid().ToString("N"), name, args));
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed tool_call blocks.
+            }
+        }
+
+        return calls.Count > 0 ? calls : null;
     }
 }

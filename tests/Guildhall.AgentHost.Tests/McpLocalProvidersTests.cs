@@ -110,4 +110,25 @@ public sealed class McpLocalProvidersTests : IDisposable
         Assert.Equal(["--no-pager", "status", "--short", "--branch"], runner.LastArguments!);
         Assert.DoesNotContain("GUILDHALL_SESSION_TOKEN", runner.LastEnvironment!.Keys);
     }
+
+    [Fact]
+    public void OllamaFallbackExtractsXmlToolCallsEmittedInsideThinking()
+    {
+        var raw = """
+            Let me call both tools.
+            <tool_call>
+            {"name": "git-mcp__git_status", "arguments": {}}
+            </tool_call>
+            <tool_call>
+            {"name": "git-mcp__git_log", "arguments": {"maxCount": 5}}
+            </tool_call>
+            """;
+
+        var calls = Guildhall.AgentHost.Providers.Ollama.OllamaBackingEngine.ExtractXmlToolCalls(raw);
+        Assert.NotNull(calls);
+        Assert.Equal(2, calls!.Count);
+        Assert.Equal("git-mcp__git_status", calls[0].QualifiedName);
+        Assert.Equal("git-mcp__git_log", calls[1].QualifiedName);
+        Assert.Equal(5, calls[1].Arguments.GetProperty("maxCount").GetInt32());
+    }
 }
