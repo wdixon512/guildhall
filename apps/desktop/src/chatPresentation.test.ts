@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatResponseDuration, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
+import { formatAttachmentSize, formatResponseDuration, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
 
 beforeEach(() => localStorage.clear());
 
 describe('chat presentation helpers', () => {
+  it('formats attachment sizes in KB below 1 MB and MB at or above 1 MB', () => {
+    expect(formatAttachmentSize(0)).toBe('0 KB');
+    expect(formatAttachmentSize(400)).toBe('1 KB');
+    expect(formatAttachmentSize(42 * 1024)).toBe('42 KB');
+    expect(formatAttachmentSize(1024 * 1024 - 1)).toBe('1024 KB');
+    expect(formatAttachmentSize(1024 * 1024)).toBe('1.0 MB');
+    expect(formatAttachmentSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
+    expect(formatAttachmentSize(-5)).toBe('0 KB');
+    expect(formatAttachmentSize(Number.NaN)).toBe('0 KB');
+  });
+
   it('formats only finite non-negative response times', () => {
     expect(formatResponseDuration(0.234)).toBe('Response time: 234 ms');
     expect(formatResponseDuration(1.26)).toBe('Response time: 1.3 s');
@@ -20,14 +31,14 @@ describe('chat presentation helpers', () => {
 
   it('describes observable waiting state without claiming model thoughts', () => {
     expect(waitingMessages('April', 'qwen3:4b')).toEqual([
-      "April's reply is in progress.",
-      'Waiting for qwen3:4b to return the first text.',
-      'The response will appear here as it arrives.',
-      'No response text has arrived yet.',
-      'You can keep browsing while this reply runs.',
-      'Guildhall is waiting for the next response update.',
+      "April's reply is in progress",
+      'Waiting for qwen3:4b to return the first text',
+      'The response will appear here as it arrives',
+      'No response text has arrived yet',
+      'You can keep browsing while this reply runs',
+      'Guildhall is waiting for the next response update',
     ]);
-    expect(waitingMessages('', null)[0]).toBe("The guild member's reply is in progress.");
+    expect(waitingMessages('', null)[0]).toBe("The guild member's reply is in progress");
   });
 
   it('identifies only user turns paired with queued assistant entries', () => {

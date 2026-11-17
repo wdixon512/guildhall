@@ -355,6 +355,10 @@ describe('connection status', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Open Busy session' }));
     const composer = screen.getByRole('textbox', { name: 'Message' });
     await screen.findByRole('button', { name: 'Stop response' });
+    const waiting = document.querySelector('.waiting-label');
+    expect(waiting).not.toBeNull();
+    expect(waiting?.querySelectorAll('.waiting-dots')).toHaveLength(6);
+    expect(waiting?.querySelector('.waiting-dots')?.textContent).toBe('...');
     await waitFor(() => expect(composer).toBeEnabled());
     const model = screen.getByRole('combobox', { name: 'Model for this conversation' });
     expect(model).toBeEnabled();
@@ -537,13 +541,13 @@ describe('connection status', () => {
     render(<App />);
     const first = await screen.findByRole('button', { name: 'Open running' });
     fireEvent.click(first);
-    await screen.findByText(/reply is in progress\./);
+    await screen.findByText(/reply is in progress/);
     expect(screen.getByRole('button', { name: 'Delete running' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Archive running' })).toBeDisabled();
     const other = screen.getByRole('button', { name: 'Open other' });
     expect(other).toBeEnabled();
     fireEvent.click(other);
-    await waitFor(() => expect(screen.queryByText(/reply is in progress\./)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/reply is in progress/)).toBeNull());
     expect(screen.getByRole('heading', { name: 'other' })).toBeInTheDocument();
   });
 
@@ -672,7 +676,7 @@ describe('connection status', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add attachments' })).toBeEnabled());
     const file = new File(['local note'], 'notes.txt', { type: 'text/plain' });
     fireEvent.change(screen.getByLabelText('Choose attachments'), { target: { files: [file] } });
-    expect(screen.getByText(/notes.txt/)).toBeInTheDocument();
+    expect(screen.getByText(/notes\.txt · 1 KB/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(submitted).toBeInstanceOf(FormData));
     expect(submitted).toBeInstanceOf(FormData);
