@@ -27,8 +27,8 @@ public sealed class LocalFilesystemMcpProvider(WorkspacePathGuard pathGuard) : I
             """{"type":"object","properties":{"path":{"type":"string","description":"Relative file path inside workspace."},"startLine":{"type":"integer","description":"Optional 1-based start line."},"endLine":{"type":"integer","description":"Optional 1-based inclusive end line."}},"required":["path"]}"""),
         CreateDescriptor(
             "fs_search_files",
-            "Search for a case-insensitive text pattern across text files in the authorized workspace folder (read-only).",
-            """{"type":"object","properties":{"pattern":{"type":"string","description":"Substring to search for."},"subPath":{"type":"string","description":"Optional relative subdirectory to narrow search."}},"required":["pattern"]}"""),
+            "Search for a plain case-insensitive substring (not regex) across text files in the authorized workspace folder (read-only).",
+            """{"type":"object","properties":{"pattern":{"type":"string","description":"Plain substring to search for (do not regex-escape dots or slashes)."},"subPath":{"type":"string","description":"Optional directory relative to workspace root (e.g. 'docs/masterplan'; default '.')."}},"required":["pattern"]}"""),
     ];
 
     public string ServerId => "filesystem-mcp";
