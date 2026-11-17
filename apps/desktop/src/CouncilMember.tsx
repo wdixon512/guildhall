@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react';
-import type { Bootstrap } from './api';
+import { request, type Bootstrap, type CustomMcpServerView } from './api';
 import { Icon } from './Icon';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { StreamingMarkdown } from './StreamingMarkdown';
@@ -69,6 +69,7 @@ const MCP_TOOL_OPTIONS = [
   { id: 'github-mcp', label: 'GitHub (Tier 1/3)' },
   { id: 'google-drive-mcp', label: 'Google Drive (Tier 1)' },
   { id: 'gmail-mcp', label: 'Gmail (Tier 1/3)' },
+  { id: 'sql-server-mcp', label: 'SQL Server Read-Only (Tier 1)' },
 ] as const;
 
 export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0, enabledToolIds = ['filesystem-mcp', 'git-mcp'], permissionPolicy = 'ask_unsafe', onUpdateToolPolicy }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number; enabledToolIds?: string[]; permissionPolicy?: string; onUpdateToolPolicy?: (enabledToolIds: string[], permissionPolicy: string) => void }) {
@@ -151,6 +152,28 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
     link.remove();
     URL.revokeObjectURL(url);
   }
+  const [customMcpOptions, setCustomMcpOptions] = useState<Array<{ id: string; label: string }>>([]);
+  useEffect(() => {
+    if (!config || !profileId || !onUpdateToolPolicy) return;
+    const ac = new AbortController();
+    void (request(config, '/mcp/servers/custom', ac.signal) as Promise<CustomMcpServerView[]>)
+      .then(list => {
+        if (!Array.isArray(list)) return;
+        setCustomMcpOptions(
+          list
+            .filter(s => s.isEnabled)
+            .map(s => ({ id: s.id, label: `${s.displayName} (${s.securityTier} · Remote MCP)` })),
+        );
+      })
+      .catch(() => { /* best effort; built-in options remain available */ });
+    return () => ac.abort();
+  }, [config, profileId, onUpdateToolPolicy]);
+
+  const allToolOptions = [
+    ...MCP_TOOL_OPTIONS,
+    ...customMcpOptions.filter(c => !MCP_TOOL_OPTIONS.some(b => b.id === c.id)),
+  ];
+
   return <aside id="guild-member-pane" ref={panel} className={`member-panel ${closing ? 'panel-closing' : ''}`} role={overlay ? 'dialog' : undefined} aria-modal={overlay ? true : undefined} aria-label="Guild member" onKeyDown={event => {
     if (event.key !== 'Tab' || !overlay) return;
     const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(.sr-only), select, textarea:not(:disabled), [role="separator"][tabindex="0"]');
@@ -212,7 +235,7 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
       <section className="member-section member-tools-policy" aria-label="MCP tools and permissions">
         <h3>Allowed MCP tools</h3>
         <div className="member-tool-checks">
-          {MCP_TOOL_OPTIONS.map(opt => {
+          {allToolOptions.map(opt => {
             const checked = enabledToolIds.includes(opt.id);
             return (
               <label key={opt.id} className="member-tool-check">

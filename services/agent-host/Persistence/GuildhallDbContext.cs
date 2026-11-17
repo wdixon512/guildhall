@@ -166,6 +166,7 @@ public sealed class McpServerRegistration
     public string? Command { get; set; }
     public string ArgumentsJson { get; set; } = "[]";
     public string? EndpointUrl { get; set; }
+    public bool AllowPrivateTunnelHttp { get; set; }
     public string SecurityTier { get; set; } = "Tier3";
     public bool IsEnabled { get; set; } = true;
     public DateTime CreatedUtc { get; set; }
@@ -239,6 +240,23 @@ public sealed class ToolRollbackSnapshot
     public DateTime? RolledBackUtc { get; set; }
 }
 
+public sealed class SqlMcpProfile
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Server { get; set; } = string.Empty;
+    public string Database { get; set; } = string.Empty;
+    public string AuthMode { get; set; } = "integrated";
+    public string AllowedSchemasJson { get; set; } = "[\"dbo\"]";
+    public string AllowedObjectsJson { get; set; } = "[]";
+    public int MaxRows { get; set; } = 100;
+    public int CommandTimeoutSeconds { get; set; } = 10;
+    public bool IsEnabled { get; set; } = true;
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+    public long Revision { get; set; }
+}
+
 public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> options) : DbContext(options)
 {
     public DbSet<ApplicationMetadata> ApplicationMetadata => Set<ApplicationMetadata>();
@@ -254,6 +272,7 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
     public DbSet<RegisteredProject> RegisteredProjects => Set<RegisteredProject>();
     public DbSet<ProjectWorktree> ProjectWorktrees => Set<ProjectWorktree>();
     public DbSet<ToolRollbackSnapshot> ToolRollbackSnapshots => Set<ToolRollbackSnapshot>();
+    public DbSet<SqlMcpProfile> SqlMcpProfiles => Set<SqlMcpProfile>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApplicationMetadata>().ToTable("ApplicationMetadata");
@@ -313,6 +332,7 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.Command).HasMaxLength(500);
             e.Property(x => x.ArgumentsJson).HasMaxLength(2000).IsRequired().HasDefaultValue("[]");
             e.Property(x => x.EndpointUrl).HasMaxLength(500);
+            e.Property(x => x.AllowPrivateTunnelHttp).HasDefaultValue(false);
             e.Property(x => x.SecurityTier).HasMaxLength(20).IsRequired().HasDefaultValue("Tier3");
             e.Property(x => x.IsEnabled).HasDefaultValue(true);
             e.Property(x => x.Revision).IsConcurrencyToken();
@@ -345,6 +365,21 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.PostStateRef).HasColumnType("nvarchar(max)");
             e.Property(x => x.Status).HasMaxLength(30).IsRequired().HasDefaultValue("Available");
             e.HasIndex(x => new { x.RunId, x.RunEventId });
+        });
+        modelBuilder.Entity<SqlMcpProfile>(e => {
+            e.ToTable("SqlMcpProfiles");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Server).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Database).HasMaxLength(128).IsRequired();
+            e.Property(x => x.AuthMode).HasMaxLength(30).IsRequired().HasDefaultValue("integrated");
+            e.Property(x => x.AllowedSchemasJson).HasMaxLength(2000).IsRequired().HasDefaultValue("[\"dbo\"]");
+            e.Property(x => x.AllowedObjectsJson).HasMaxLength(4000).IsRequired().HasDefaultValue("[]");
+            e.Property(x => x.MaxRows).HasDefaultValue(100);
+            e.Property(x => x.CommandTimeoutSeconds).HasDefaultValue(10);
+            e.Property(x => x.IsEnabled).HasDefaultValue(true);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => x.Name).IsUnique();
         });
     }
 }

@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Guildhall.AgentHost.Configuration;
 using Guildhall.AgentHost.Persistence;
+using Guildhall.AgentHost.Security;
 
 namespace Guildhall.AgentHost.Mcp;
 
@@ -16,10 +18,12 @@ public interface IMcpJsonRpcClient
 public sealed class McpJsonRpcClient(
     IHttpClientFactory httpClients,
     ICredentialStore credentialStore,
-    EnvironmentScrubber environmentScrubber) : IMcpJsonRpcClient
+    EnvironmentScrubber environmentScrubber,
+    PrivateNetworkGuard privateNetworkGuard) : IMcpJsonRpcClient
 {
     private const int MaxLineLength = 256 * 1024;
     private static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(15);
+    private readonly ConcurrentDictionary<string, string> _sessionIds = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<IReadOnlyList<McpToolDescriptor>> ListToolsAsync(McpServerRegistration registration, CancellationToken cancellationToken)
     {
@@ -87,15 +91,22 @@ public sealed class McpJsonRpcClient(
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(registration.EndpointUrl) ||
-            !Uri.TryCreate(registration.EndpointUrl, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttps && !uri.IsLoopback))
+            !Uri.TryCreate(registration.EndpointUrl, UriKind.Absolute, out var uri))
         {
-            throw new InvalidOperationException("MCP Streamable HTTP endpoint must be HTTPS or loopback HTTP.");
+            throw new InvalidOperationException("MCP Streamable HTTP endpoint must be a valid absolute URI.");
         }
+
+        var endpointValidation = privateNetworkGuard.ValidateMcpEndpoint(uri, registration.AllowPrivateTunnelHttp);
+        if (!endpointValidation.IsAllowed)
+            throw new InvalidOperationException(endpointValidation.Reason ?? "MCP Streamable HTTP endpoint is not allowed.");
 
         var client = httpClients.CreateClient("mcp-http");
         using var request = new HttpRequestMessage(HttpMethod.Post, uri);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+        if (_sessionIds.TryGetValue(registration.Id, out var sessionId) && !string.IsNullOrWhiteSpace(sessionId))
+            request.Headers.TryAddWithoutValidation("Mcp-Session-Id", sessionId);
 
         var token = await credentialStore.GetApiKeyAsync($"mcp:{registration.Id}", cancellationToken);
         if (!string.IsNullOrWhiteSpace(token))
@@ -106,6 +117,49 @@ public sealed class McpJsonRpcClient(
 
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
+
+        if (response.Headers.TryGetValues("Mcp-Session-Id", out var sessionValues))
+        {
+            var newSessionId = sessionValues.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(newSessionId))
+                _sessionIds[registration.Id] = newSessionId;
+        }
+
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (string.Equals(mediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            JsonElement? lastResult = null;
+            var dataBuffer = new StringBuilder();
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                if (line.Length == 0)
+                {
+                    if (dataBuffer.Length > 0)
+                    {
+                        using var sseDoc = JsonDocument.Parse(dataBuffer.ToString());
+                        lastResult = UnwrapJsonRpcResult(sseDoc.RootElement);
+                        dataBuffer.Clear();
+                    }
+                    continue;
+                }
+                if (line.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    if (dataBuffer.Length > 0) dataBuffer.Append('\n');
+                    dataBuffer.Append(line.AsSpan(5).TrimStart());
+                }
+            }
+            if (dataBuffer.Length > 0)
+            {
+                using var sseDoc = JsonDocument.Parse(dataBuffer.ToString());
+                lastResult = UnwrapJsonRpcResult(sseDoc.RootElement);
+            }
+            if (lastResult.HasValue)
+                return lastResult.Value;
+
+            throw new InvalidOperationException("MCP Streamable HTTP SSE stream completed without a JSON-RPC result.");
+        }
 
         using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
         return UnwrapJsonRpcResult(doc.RootElement);

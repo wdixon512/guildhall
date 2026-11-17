@@ -70,6 +70,15 @@ function storedPaneWidth(key: string, fallback: number, min: number, max: number
   } catch { return fallback; }
 }
 
+function defaultOllamaModelId(discovery: Discovery | null) {
+  if (!discovery || discovery.status !== 'available') return '';
+  return (
+    discovery.models.find(model => model.id === 'qwen3:4b')?.id ??
+    discovery.models.find(model => model.id === 'qwen3:1.7b')?.id ??
+    ''
+  );
+}
+
 export default function App() {
   const { identity, setIdentity, storageError } = useMemberIdentity(false);
   const [showMember, setShowMember] = useState(() => window.innerWidth >= 1280);
@@ -272,8 +281,8 @@ export default function App() {
           if (pending.current === controller) {
             setModels(value);
             if (!conversation && value.status === 'available') {
-              const defaultModel = value.models.find(model => model.id === 'qwen3:1.7b');
-              if (defaultModel) setChosenModel(current => current || defaultModel.id);
+              const defaultModelId = defaultOllamaModelId(value);
+              if (defaultModelId) setChosenModel(current => current || defaultModelId);
             }
           }
         }).catch(() => { if (pending.current === controller) setModelError(true); }),
@@ -685,7 +694,13 @@ export default function App() {
     try {
       const list = createNew ? [] : await request(configuration.current, '/conversations?limit=1', new AbortController().signal) as Conversation[];
       if (!list.length && (!selectedProfile || selectedProfile.isArchived)) { setChatError('Choose or restore an active guild member before starting a new session.'); return; }
-      const item = list[0] ?? await request(configuration.current, '/conversations', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New conversation', providerId: selectedProfile?.defaultProviderId || chosenProvider || 'ollama', modelId: selectedProfile?.defaultModelId || chosenModel || null, harnessMode: selectedProfile?.defaultHarnessMode || chosenHarnessMode || null, agentDefinitionId }) }) as Conversation;
+      const nextProviderId = selectedProfile?.defaultProviderId || chosenProvider || 'ollama';
+      const nextModelId =
+        selectedProfile?.defaultModelId ||
+        (nextProviderId === 'ollama' ? defaultOllamaModelId(models) : '') ||
+        chosenModel ||
+        null;
+      const item = list[0] ?? await request(configuration.current, '/conversations', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New conversation', providerId: nextProviderId, modelId: nextModelId, harnessMode: selectedProfile?.defaultHarnessMode || chosenHarnessMode || null, agentDefinitionId }) }) as Conversation;
       const details = await request(configuration.current, `/conversations/${item.id}`, new AbortController().signal) as ConversationDetails;
       switchComposerContext(details.conversation.id, details.agent?.id ?? agentDefinitionId);
       setConversation(details);
@@ -1038,7 +1053,7 @@ export default function App() {
           <Icon name="panel" />
         </button>
         <span className="app-bar-spacer" />
-        <button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { setShowSettings(false); setShowConnections(!showConnections); }} aria-expanded={showConnections}>
+        <button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { const next = !showConnections; setShowSettings(false); setShowConnections(next); if (next && !connections) void probeAllConnections(); }} aria-expanded={showConnections}>
           <span className={`dot ${host === 'Connected' ? '' : 'offline'}`} /><Icon name="connections" size={17} /><span>Connections</span>
         </button>
         <button className="member-toggle" aria-label="Customize guild member" aria-expanded={showMember} onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}>

@@ -111,7 +111,7 @@ public sealed class ToolLoopChatRunnerTests : IDisposable
             var registry = new McpRegistry(
                 [new LocalFilesystemMcpProvider(pathGuard)],
                 factory,
-                new McpJsonRpcClient(new StubHttpFactory(), new StubCreds(), new Configuration.EnvironmentScrubber()),
+                new McpJsonRpcClient(new StubHttpFactory(), new StubCreds(), new Configuration.EnvironmentScrubber(), new PrivateNetworkGuard()),
                 health,
                 exfilGuard);
             var contextBuilder = new ContextBuilder(

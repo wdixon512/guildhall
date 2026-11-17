@@ -115,7 +115,12 @@ public sealed partial class OllamaBackingEngine(
         };
         using var response = await clients.CreateClient("ollama-chat")
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (errorBody.Length > 512) errorBody = errorBody[..512];
+            throw new BackingEngineException("provider_error", $"Ollama returned HTTP {(int)response.StatusCode}: {errorBody}");
+        }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);

@@ -68,6 +68,12 @@ export type WorktreeDiff = { worktreeId: string; branchName: string; baseCommitS
 export type WorktreeMergeResult = { merged: boolean; mergedCommitSha?: string | null; message: string };
 export type WorkspaceAccessPolicy = { policyOverride?: string | null; revision: number };
 export type WorktreeSettings = { defaultWorktreeRootPath?: string | null; revision: number };
+export type SqlMcpProfileView = { id: string; name: string; server: string; database: string; authMode: 'integrated' | 'sql_login'; allowedSchemas: string[]; allowedObjects: string[]; maxRows: number; commandTimeoutSeconds: number; isEnabled: boolean; createdUtc: string; updatedUtc: string; revision: number };
+export type SqlMcpProbeResponse = { profileId: string; name: string; healthy: boolean; detail?: string | null; checkedUtc: string };
+export type CustomMcpServerView = { id: string; displayName: string; transport: 'stdio' | 'streamable_http'; endpointUrl?: string | null; allowPrivateTunnelHttp: boolean; securityTier: string; isEnabled: boolean; hasToken: boolean; revision: number; toolCount?: number; healthStatus?: string };
+export type TunnelInterfaceInfo = { name: string; kind: string; status: string; addresses: string[] };
+export type PortExposureCheck = { port: number; serviceName: string; posture: string; listeningAddresses: string[]; summary: string };
+export type PrivateNetworkStatus = { wireGuardDetected: boolean; tailscaleDetected: boolean; tunnelInterfaces: TunnelInterfaceInfo[]; portChecks: PortExposureCheck[]; checkedUtc: string };
 
 export async function pickWorkspaceFolder(): Promise<string | null> {
   return invoke<string | null>('pick_workspace_folder');

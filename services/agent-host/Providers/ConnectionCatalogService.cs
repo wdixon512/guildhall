@@ -46,7 +46,7 @@ public sealed class ConnectionCatalogService(
         entries.Add(await BuildCredentialMcpEntryAsync("github-mcp", "GitHub MCP", "Personal Access Token (DPAPI)", runLiveProbes, ct));
         entries.Add(await BuildCredentialMcpEntryAsync("google-drive-mcp", "Google Drive MCP", "OAuth access token (DPAPI)", runLiveProbes, ct));
         entries.Add(await BuildCredentialMcpEntryAsync("gmail-mcp", "Gmail MCP", "OAuth access token (DPAPI)", runLiveProbes, ct));
-        entries.Add(BuildPlannedEntry("sql-server-mcp", "SQL Server MCP", "MCP & Service Integrations (Phase 5)"));
+        entries.Add(await BuildSqlMcpEntryAsync(runLiveProbes, ct));
 
         return new ConnectionsCatalogResponse(entries, timeProvider.GetUtcNow());
     }
@@ -84,6 +84,9 @@ public sealed class ConnectionCatalogService(
             return await BuildCredentialMcpEntryAsync(id, name, hint, runLiveProbe: true, ct);
         }
 
+        if (string.Equals(id, "sql-server-mcp", StringComparison.OrdinalIgnoreCase))
+            return await BuildSqlMcpEntryAsync(runLiveProbe: true, ct);
+
         var descriptor = CliHarnessDescriptors.Find(id);
         if (descriptor is not null)
             return await BuildCliEntryAsync(descriptor, runLiveProbe: true, ct);
@@ -112,7 +115,9 @@ public sealed class ConnectionCatalogService(
                     ? "Ollama is running with no local models installed"
                     : "Ollama is not running on 127.0.0.1:11434",
             KeyHint: null,
-            DefaultModelId: models.FirstOrDefault()?.Id,
+            DefaultModelId: models.FirstOrDefault(m => m.Id == "qwen3:4b")?.Id
+                ?? models.FirstOrDefault(m => m.Id == "qwen3:1.7b")?.Id
+                ?? models.FirstOrDefault()?.Id,
             Models: models,
             CanConfigureApiKey: false,
             CanProbe: true,
@@ -451,6 +456,60 @@ public sealed class ConnectionCatalogService(
             DefaultModelId: null,
             Models: [],
             CanConfigureApiKey: true,
+            CanProbe: true,
+            IsPlanned: false);
+    }
+
+    private async Task<ConnectionEntryResponse> BuildSqlMcpEntryAsync(bool runLiveProbe, CancellationToken ct)
+    {
+        var status = Statuses.NotConnected;
+        var detail = "Configure a read-only SQL Server profile (Windows Integrated or DPAPI login)";
+
+        if (runLiveProbe && mcpRegistry is not null)
+        {
+            var probe = await mcpRegistry.ProbeServerAsync("sql-server-mcp", ct);
+            if (probe is not null)
+            {
+                if (probe.Status == McpHealthStatuses.Connected)
+                {
+                    status = Statuses.Connected;
+                    detail = probe.LastError ?? "Read-only SQL Server MCP connected";
+                }
+                else if (!string.IsNullOrWhiteSpace(probe.LastError) &&
+                         probe.LastError.Contains("No read-only SQL Server profiles configured", StringComparison.OrdinalIgnoreCase))
+                {
+                    status = Statuses.NotConnected;
+                    detail = probe.LastError;
+                }
+                else
+                {
+                    status = Statuses.Unavailable;
+                    detail = probe.LastError ?? "SQL Server MCP probe failed";
+                }
+            }
+        }
+        else if (mcpHealth is not null)
+        {
+            var existing = mcpHealth.Get("sql-server-mcp");
+            if (existing?.Status == McpHealthStatuses.Connected)
+            {
+                status = Statuses.Connected;
+                detail = "Read-only SQL Server MCP ready";
+            }
+        }
+
+        return new ConnectionEntryResponse(
+            Id: "sql-server-mcp",
+            Pillar: "MCP & Service Integrations",
+            EngineKind: "mcp",
+            DisplayName: "SQL Server MCP (Read-Only)",
+            AuthType: "sql_readonly",
+            Status: status,
+            StatusDetail: detail,
+            KeyHint: null,
+            DefaultModelId: null,
+            Models: [],
+            CanConfigureApiKey: false,
             CanProbe: true,
             IsPlanned: false);
     }
