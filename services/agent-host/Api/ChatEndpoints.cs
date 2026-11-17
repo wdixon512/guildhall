@@ -1,9 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Guildhall.AgentHost.Persistence;
 using Guildhall.AgentHost.Chat;
+using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Providers.Ollama;
+using Guildhall.AgentHost.Security;
 
 namespace Guildhall.AgentHost.Api;
 
@@ -23,7 +26,7 @@ public static class ChatEndpoints
             var keepAlive = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
             return discovery.GetRunningModelsAsync(useGpu, keepAlive, ct);
         });
-        app.MapGet("/conversations/{id:guid}/context", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, IContextBuilder contextBuilder, OllamaDiscovery discovery, IConfiguration configuration, CancellationToken ct) =>
+        app.MapGet("/conversations/{id:guid}/context", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, IContextBuilder contextBuilder, OllamaDiscovery discovery, IConfiguration configuration, McpRegistry mcpRegistry, McpHealthSupervisor mcpHealth, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
             var conversation = await db.Conversations.AsNoTracking().Include(x => x.AgentDefinition).SingleOrDefaultAsync(x => x.Id == id, ct);
@@ -43,6 +46,22 @@ public static class ChatEndpoints
                 x.EstimatedTokens,
                 x.Body.Length > 120 ? x.Body[..120] + "…" : x.Body)).ToList();
 
+            var servers = await mcpRegistry.ListServersAsync(ct);
+            var serverViews = servers.Select(s =>
+            {
+                var h = mcpHealth.Get(s.ServerId);
+                return new McpServerHealthView(
+                    s.ServerId,
+                    s.DisplayName,
+                    s.Transport,
+                    h?.Status ?? McpHealthStatuses.Connected,
+                    h?.ConsecutiveFailures ?? 0,
+                    h?.LastCheckedUtc,
+                    h?.NextRetryUtc,
+                    h?.LastError,
+                    []);
+            }).ToArray();
+
             return Results.Ok(new ContextInspectorResponse(
                 conversation.Id,
                 conversation.AgentDefinitionId,
@@ -57,7 +76,10 @@ public static class ChatEndpoints
                 assembly.RetainedHistoryTurns,
                 assembly.RetainedHistoryChars,
                 assembly.Budget,
-                vram));
+                vram,
+                assembly.EstimatedToolSchemaTokens,
+                assembly.EnabledToolCount,
+                serverViews));
         });
         app.MapGet("/preambles", (Lazy<IPreambleCacheService> preambleCache) =>
         {
@@ -203,6 +225,8 @@ public static class ChatEndpoints
         });
         app.MapPost("/runs/{id:guid}/cancel", async (Guid id, ChatRunner runner, CancellationToken ct) =>
             await runner.CancelAsync(id, ct) ? Results.Ok(new { runId = id }) : Results.NotFound());
+        app.MapPost("/runs/{runId:guid}/events/{eventId:guid}/decision", async (Guid runId, Guid eventId, ResolveRunEventDecisionRequest request, ChatRunner runner, CancellationToken ct) =>
+            await runner.ResolveEventDecisionAsync(runId, eventId, request.Approved, ct) ? Results.NoContent() : Results.NotFound());
         app.MapPost("/runs/{id:guid}/promote", async (Guid id, PromoteRunRequest request, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, CancellationToken ct) =>
         {
             await runner.MutationGate.WaitAsync(ct);
@@ -254,15 +278,18 @@ public static class ChatEndpoints
         app.MapGet("/agents", async (IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
-            var profiles = await db.AgentDefinitions.AsNoTracking().Where(x => x.Id != AssistantId || db.Conversations.Any(c => c.AgentDefinitionId == AssistantId)).OrderBy(x => x.IsArchived).ThenBy(x => x.Name).ThenBy(x => x.Id).Select(x => new AgentProfileResponse(x.Id, x.Name, x.Role, x.PortraitId, x.CustomPortrait, x.Accent, x.Instructions, x.DefaultModelId, x.Revision, x.IsArchived, x.DefaultProviderId, x.DefaultHarnessMode)).ToListAsync(ct);
-            return Results.Ok(profiles);
+            var entities = await db.AgentDefinitions.AsNoTracking().Where(x => x.Id != AssistantId || db.Conversations.Any(c => c.AgentDefinitionId == AssistantId)).OrderBy(x => x.IsArchived).ThenBy(x => x.Name).ThenBy(x => x.Id).ToListAsync(ct);
+            return Results.Ok(entities.Select(ToProfile).ToList());
         });
         app.MapPost("/agents", async (CreateAgentProfileRequest request, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             var invalid = ValidateProfile(request.Name, request.Role, request.PortraitId, request.CustomPortrait, request.Accent, request.Instructions, request.DefaultModelId);
             if (invalid is not null) return Results.BadRequest(new ErrorResponse("invalid_profile", invalid));
             await using var db = await factory.CreateDbContextAsync(ct);
-            var profile = new AgentDefinition { Id = Guid.NewGuid(), Name = request.Name.Trim(), Role = request.Role.Trim(), PortraitId = request.PortraitId, CustomPortrait = request.CustomPortrait, Accent = request.Accent, Instructions = request.Instructions, DefaultProviderId = string.IsNullOrWhiteSpace(request.DefaultProviderId) ? "ollama" : request.DefaultProviderId.Trim(), DefaultModelId = string.IsNullOrWhiteSpace(request.DefaultModelId) ? null : request.DefaultModelId.Trim(), DefaultHarnessMode = string.IsNullOrWhiteSpace(request.DefaultHarnessMode) ? null : request.DefaultHarnessMode.Trim(), Revision = 1 };
+            var enabledToolsJson = request.EnabledToolIds is not null
+                ? JsonSerializer.Serialize(request.EnabledToolIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+                : "[\"filesystem-mcp\",\"git-mcp\"]";
+            var profile = new AgentDefinition { Id = Guid.NewGuid(), Name = request.Name.Trim(), Role = request.Role.Trim(), PortraitId = request.PortraitId, CustomPortrait = request.CustomPortrait, Accent = request.Accent, Instructions = request.Instructions, DefaultProviderId = string.IsNullOrWhiteSpace(request.DefaultProviderId) ? "ollama" : request.DefaultProviderId.Trim(), DefaultModelId = string.IsNullOrWhiteSpace(request.DefaultModelId) ? null : request.DefaultModelId.Trim(), DefaultHarnessMode = string.IsNullOrWhiteSpace(request.DefaultHarnessMode) ? null : request.DefaultHarnessMode.Trim(), EnabledToolIdsJson = enabledToolsJson, PermissionPolicy = PermissionPolicies.Normalize(request.PermissionPolicy), Revision = 1 };
             db.AgentDefinitions.Add(profile); await db.SaveChangesAsync(ct);
             return Results.Created($"/agents/{profile.Id}", ToProfile(profile));
         });
@@ -274,7 +301,7 @@ public static class ChatEndpoints
             var profile = await db.AgentDefinitions.SingleOrDefaultAsync(x => x.Id == id, ct);
             if (profile is null) return Results.NotFound();
             if (profile.Revision != request.ExpectedRevision) return Results.Conflict(new ErrorResponse("revision_conflict", "Guild member changed; refresh and retry."));
-            profile.Name = request.Name.Trim(); profile.Role = request.Role.Trim(); profile.PortraitId = request.PortraitId; profile.CustomPortrait = request.CustomPortrait; profile.Accent = request.Accent; profile.Instructions = request.Instructions; profile.DefaultModelId = string.IsNullOrWhiteSpace(request.DefaultModelId) ? null : request.DefaultModelId.Trim(); if (request.DefaultProviderId is not null) profile.DefaultProviderId = string.IsNullOrWhiteSpace(request.DefaultProviderId) ? "ollama" : request.DefaultProviderId.Trim(); if (request.DefaultHarnessMode is not null) profile.DefaultHarnessMode = string.IsNullOrWhiteSpace(request.DefaultHarnessMode) ? null : request.DefaultHarnessMode.Trim(); profile.Revision++;
+            profile.Name = request.Name.Trim(); profile.Role = request.Role.Trim(); profile.PortraitId = request.PortraitId; profile.CustomPortrait = request.CustomPortrait; profile.Accent = request.Accent; profile.Instructions = request.Instructions; profile.DefaultModelId = string.IsNullOrWhiteSpace(request.DefaultModelId) ? null : request.DefaultModelId.Trim(); if (request.DefaultProviderId is not null) profile.DefaultProviderId = string.IsNullOrWhiteSpace(request.DefaultProviderId) ? "ollama" : request.DefaultProviderId.Trim(); if (request.DefaultHarnessMode is not null) profile.DefaultHarnessMode = string.IsNullOrWhiteSpace(request.DefaultHarnessMode) ? null : request.DefaultHarnessMode.Trim(); if (request.EnabledToolIds is not null) profile.EnabledToolIdsJson = JsonSerializer.Serialize(request.EnabledToolIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()); if (request.PermissionPolicy is not null) profile.PermissionPolicy = PermissionPolicies.Normalize(request.PermissionPolicy); profile.Revision++;
             await db.SaveChangesAsync(ct);
             return Results.Ok(ToProfile(profile));
         });
@@ -340,7 +367,7 @@ public static class ChatEndpoints
                 .Select(x => new ConversationSummary(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc,
                     x.Runs.Any(r => r.Status == ChatRunStatus.Running || r.Status == ChatRunStatus.Cancelling || r.Status == ChatRunStatus.Queued), x.Revision, x.AgentDefinitionId,
                     x.Runs.Where(r => r.FinishedUtc != null && r.Messages.Any(m => m.Role == ChatMessageRole.Assistant && (r.Status == ChatRunStatus.Completed || m.Text != string.Empty))).Max(r => (DateTime?)r.FinishedUtc),
-                    x.SelectedProviderId, x.SelectedHarnessMode)).ToListAsync(ct);
+                    x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride)).ToListAsync(ct);
             var untitledIds = rows.Where(x => x.Title == "New conversation").Select(x => x.Id).ToList();
             var firstMessages = await db.ChatMessages.AsNoTracking().Where(m => untitledIds.Contains(m.Run.ConversationId) && m.Role == ChatMessageRole.User)
                 .OrderBy(m => m.Run.TurnNumber).Select(m => new { ConversationId = m.Run.ConversationId, m.Text }).ToListAsync(ct);
@@ -353,7 +380,7 @@ public static class ChatEndpoints
             await runner.MutationGate.WaitAsync(ct);
             try {
             await using var db = await factory.CreateDbContextAsync(ct); var agentId = request.AgentDefinitionId ?? AssistantId; var assistant = await db.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentId, ct); if (assistant is null) return Results.BadRequest(new ErrorResponse("agent_not_found", "Choose an existing guild member.")); if (assistant.IsArchived) return Results.Conflict(new ErrorResponse("member_archived", "Restore this guild member before starting a new session."));
-            var now = DateTime.UtcNow; var item = new Conversation { Id = Guid.NewGuid(), Title = title, AgentDefinitionId = assistant.Id, SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? assistant.DefaultProviderId : request.ProviderId.Trim(), SelectedModelId = request.ModelId ?? assistant.DefaultModelId, SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? assistant.DefaultHarnessMode : request.HarnessMode.Trim(), CreatedUtc = now, UpdatedUtc = now, Revision = 1 }; db.Conversations.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/conversations/{item.Id}", ToSummary(item));
+            var now = DateTime.UtcNow; var item = new Conversation { Id = Guid.NewGuid(), Title = title, AgentDefinitionId = assistant.Id, SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? assistant.DefaultProviderId : request.ProviderId.Trim(), SelectedModelId = request.ModelId ?? assistant.DefaultModelId, SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? assistant.DefaultHarnessMode : request.HarnessMode.Trim(), WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(), PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride), CreatedUtc = now, UpdatedUtc = now, Revision = 1 }; db.Conversations.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/conversations/{item.Id}", ToSummary(item));
             } finally { runner.MutationGate.Release(); }
         });
         app.MapGet("/conversations/{id:guid}", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
@@ -362,8 +389,12 @@ public static class ChatEndpoints
             var storedMessages = await db.ChatMessages.AsNoTracking().Where(m => m.Run.ConversationId == id).OrderBy(m => m.Run.TurnNumber).Select(m => new { m.Id, Role = m.Role, m.Text, m.RunId, Status = m.Run.Status, m.Run.ErrorCode, m.Run.ModelId, m.Run.ProviderId, m.Run.EngineKind, m.Run.InputTokens, m.Run.OutputTokens, m.Run.CostSource, TurnNumber = m.Run.TurnNumber, m.Run.StartedUtc, m.Run.FinishedUtc }).ToListAsync(ct);
             var ids = storedMessages.Select(m => m.Id).ToList();
             var attachments = await db.ChatAttachments.AsNoTracking().Where(a => ids.Contains(a.MessageId)).Select(a => new { a.Id, a.MessageId, a.FileName, a.ContentType, a.Length }).ToListAsync(ct);
+            var runIds = storedMessages.Select(m => m.RunId).Distinct().ToList();
+            var runEvents = await db.ChatRunEvents.AsNoTracking().Where(e => runIds.Contains(e.RunId)).OrderBy(e => e.SequenceNumber)
+                .Select(e => new { e.Id, e.RunId, e.SequenceNumber, e.EventType, e.ServerId, e.ToolName, e.SecurityTier, e.Status, e.ArgumentsRedactedJson, e.ResultRedactedJson, e.ErrorCode, e.DurationMs, e.CreatedUtc, e.CompletedUtc }).ToListAsync(ct);
             var messages = storedMessages.OrderBy(m => m.TurnNumber).ThenBy(m => m.Role == ChatMessageRole.User ? 0 : 1).Select(m => new MessageView(m.Id, m.Role.ToString().ToLowerInvariant(), m.Text, m.RunId, m.Status.ToString(), m.TurnNumber, attachments.Where(a => a.MessageId == m.Id).Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Length)).ToArray(), m.ErrorCode, m.ModelId,
-                m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue ? Math.Max(0, (m.FinishedUtc.Value - m.StartedUtc).TotalSeconds) : null, m.ProviderId, m.EngineKind, m.InputTokens, m.OutputTokens, m.CostSource)).ToList();
+                m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue ? Math.Max(0, (m.FinishedUtc.Value - m.StartedUtc).TotalSeconds) : null, m.ProviderId, m.EngineKind, m.InputTokens, m.OutputTokens, m.CostSource,
+                m.Role == ChatMessageRole.Assistant ? runEvents.Where(e => e.RunId == m.RunId).Select(e => new RunEventView(e.Id, e.SequenceNumber, e.EventType, e.ServerId, e.ToolName, e.SecurityTier, e.Status, e.ArgumentsRedactedJson, e.ResultRedactedJson, e.ErrorCode, e.DurationMs, e.CreatedUtc, e.CompletedUtc)).ToArray() : null)).ToList();
             var title = item.Title;
             if (title == "New conversation")
             {
@@ -372,14 +403,14 @@ public static class ChatEndpoints
             }
             var lastResponseUtc = storedMessages.Where(m => m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue && (m.Status == ChatRunStatus.Completed || !string.IsNullOrEmpty(m.Text))).Select(m => (DateTime?)m.FinishedUtc).Max();
             var summary = new ConversationSummary(item.Id, title, item.SelectedModelId, item.CreatedUtc, item.UpdatedUtc, item.IsArchived, item.ArchivedUtc,
-                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId, lastResponseUtc, item.SelectedProviderId, item.SelectedHarnessMode);
+                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId, lastResponseUtc, item.SelectedProviderId, item.SelectedHarnessMode, item.WorkspaceRootPath, item.PermissionPolicyOverride);
             var agent = await db.AgentDefinitions.AsNoTracking().SingleAsync(x => x.Id == item.AgentDefinitionId, ct);
             return Results.Ok(new ConversationResponse(summary, messages, ToProfile(agent)));
         });
         app.MapPatch("/conversations/{id:guid}", async (Guid id, UpdateConversationRequest request, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct); var item = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, ct); if (item is null) return Results.NotFound(); if (item.Revision != request.ExpectedRevision) return Results.Conflict(new ErrorResponse("revision_conflict", "Conversation changed; refresh and retry."));
-            if (request.Title is not null) { if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200) return Results.BadRequest(new ErrorResponse("input_limit", "Chat names must be 1–200 characters.")); item.Title = request.Title.Trim(); } if (request.ModelId is not null) item.SelectedModelId = string.IsNullOrWhiteSpace(request.ModelId) ? null : request.ModelId.Trim(); if (request.ProviderId is not null) item.SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(); if (request.HarnessMode is not null) item.SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? null : request.HarnessMode.Trim(); if (request.IsArchived is not null) { var active = await db.ChatRuns.AnyAsync(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued), ct); if (active) return Results.Conflict(new ErrorResponse("run_active", "Wait for the current response to finish before archiving or restoring this conversation.")); item.IsArchived = request.IsArchived.Value; item.ArchivedUtc = item.IsArchived ? DateTime.UtcNow : null; } item.Revision++; item.UpdatedUtc = DateTime.UtcNow; await db.SaveChangesAsync(ct); return Results.Ok(ToSummary(item));
+            if (request.Title is not null) { if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200) return Results.BadRequest(new ErrorResponse("input_limit", "Chat names must be 1–200 characters.")); item.Title = request.Title.Trim(); } if (request.ModelId is not null) item.SelectedModelId = string.IsNullOrWhiteSpace(request.ModelId) ? null : request.ModelId.Trim(); if (request.ProviderId is not null) item.SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(); if (request.HarnessMode is not null) item.SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? null : request.HarnessMode.Trim(); if (request.WorkspaceRootPath is not null) item.WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(); if (request.PermissionPolicyOverride is not null) item.PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride); if (request.IsArchived is not null) { var active = await db.ChatRuns.AnyAsync(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued), ct); if (active) return Results.Conflict(new ErrorResponse("run_active", "Wait for the current response to finish before archiving or restoring this conversation.")); item.IsArchived = request.IsArchived.Value; item.ArchivedUtc = item.IsArchived ? DateTime.UtcNow : null; } item.Revision++; item.UpdatedUtc = DateTime.UtcNow; await db.SaveChangesAsync(ct); return Results.Ok(ToSummary(item));
         });
         app.MapDelete("/conversations/{id:guid}", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
@@ -535,7 +566,13 @@ public static class ChatEndpoints
         });
     }
     private static AssistantResponse ToResponse(AgentDefinition x) => new(x.Id, x.Name, x.Instructions, x.DefaultModelId, x.Revision);
-    private static AgentProfileResponse ToProfile(AgentDefinition x) => new(x.Id, x.Name, x.Role, x.PortraitId, x.CustomPortrait, x.Accent, x.Instructions, x.DefaultModelId, x.Revision, x.IsArchived, x.DefaultProviderId, x.DefaultHarnessMode);
+    private static AgentProfileResponse ToProfile(AgentDefinition x)
+    {
+        IReadOnlyList<string> tools;
+        try { tools = JsonSerializer.Deserialize<string[]>(x.EnabledToolIdsJson) ?? []; }
+        catch { tools = []; }
+        return new(x.Id, x.Name, x.Role, x.PortraitId, x.CustomPortrait, x.Accent, x.Instructions, x.DefaultModelId, x.Revision, x.IsArchived, x.DefaultProviderId, x.DefaultHarnessMode, tools, x.PermissionPolicy);
+    }
     private static MemoryNoteResponse ToMemoryNote(MemoryNote x) => new(x.Id, x.Scope.ToString(), x.AgentDefinitionId, x.Body, x.IsEnabled, x.SourceConversationId, x.CreatedUtc, x.UpdatedUtc, x.Revision);
     private static string? ValidateProfile(string name, string role, int portraitId, string? customPortrait, string accent, string instructions, string? defaultModelId)
     {
@@ -553,7 +590,7 @@ public static class ChatEndpoints
         dataUri.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[^2] == 0xFF && bytes[^1] == 0xD9 ||
         dataUri.StartsWith("data:image/png;base64,", StringComparison.Ordinal) && bytes.AsSpan().StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }) ||
         dataUri.StartsWith("data:image/webp;base64,", StringComparison.Ordinal) && bytes.Length >= 12 && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && System.Text.Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP";
-    private static ConversationSummary ToSummary(Conversation x) => new(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc, false, x.Revision, x.AgentDefinitionId, null, x.SelectedProviderId, x.SelectedHarnessMode);
+    private static ConversationSummary ToSummary(Conversation x) => new(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc, false, x.Revision, x.AgentDefinitionId, null, x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride);
     private static string DetectContentType(string supplied, byte[] content)
     {
         if (content.AsSpan().StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })) return "image/png";

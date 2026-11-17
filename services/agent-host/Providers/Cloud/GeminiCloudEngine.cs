@@ -45,11 +45,53 @@ public sealed class GeminiCloudEngine(
             });
         }
 
-        var payload = new
+        if (request.ToolTurns is { Count: > 0 })
         {
-            systemInstruction = new { parts = new[] { new { text = request.SystemPrompt } } },
-            contents
+            foreach (var turn in request.ToolTurns)
+            {
+                contents.Add(new
+                {
+                    role = "model",
+                    parts = turn.Calls.Select(c => new
+                    {
+                        functionCall = new { name = c.QualifiedName, args = c.Arguments }
+                    }).ToArray()
+                });
+                contents.Add(new
+                {
+                    role = "user",
+                    parts = turn.Results.Select(r => new
+                    {
+                        functionResponse = new
+                        {
+                            name = r.QualifiedName,
+                            response = new { content = r.Output, isError = r.IsError }
+                        }
+                    }).ToArray()
+                });
+            }
+        }
+
+        var payload = new Dictionary<string, object>
+        {
+            ["systemInstruction"] = new { parts = new[] { new { text = request.SystemPrompt } } },
+            ["contents"] = contents
         };
+        if (request.Tools is { Count: > 0 })
+        {
+            payload["tools"] = new[]
+            {
+                new
+                {
+                    functionDeclarations = request.Tools.Select(t => new
+                    {
+                        name = t.QualifiedName,
+                        description = t.Description,
+                        parameters = t.InputSchema
+                    }).ToArray()
+                }
+            };
+        }
 
         var model = Uri.EscapeDataString(string.IsNullOrWhiteSpace(request.ModelId) ? "gemini-2.5-flash" : request.ModelId);
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"/v1beta/models/{model}:streamGenerateContent?alt=sse")
@@ -83,6 +125,18 @@ public sealed class GeminiCloudEngine(
                             var delta = textEl.GetString();
                             if (!string.IsNullOrEmpty(delta))
                                 await onChunk(new BackingEngineChunk(DeltaText: delta), cancellationToken);
+                        }
+
+                        if (part.TryGetProperty("functionCall", out var fc))
+                        {
+                            var name = fc.TryGetProperty("name", out var n) ? n.GetString() : null;
+                            if (!string.IsNullOrWhiteSpace(name))
+                            {
+                                var args = fc.TryGetProperty("args", out var a)
+                                    ? a.Clone()
+                                    : JsonDocument.Parse("{}").RootElement.Clone();
+                                await onChunk(new BackingEngineChunk(ToolCalls: [new BackingEngineToolCall(Guid.NewGuid().ToString("N"), name, args)]), cancellationToken);
+                            }
                         }
                     }
                 }

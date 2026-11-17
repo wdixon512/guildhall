@@ -2,8 +2,10 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Persistence;
 using Guildhall.AgentHost.Providers;
+using Guildhall.AgentHost.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace Guildhall.AgentHost.Chat;
@@ -13,9 +15,14 @@ public sealed class ChatRunner(
     IBackingEngineRegistry engineRegistry,
     TimeProvider timeProvider,
     ILogger<ChatRunner> logger,
-    Lazy<IContextBuilder> contextBuilder) : BackgroundService
+    Lazy<IContextBuilder> contextBuilder,
+    McpRegistry? mcpRegistry = null,
+    ToolPermissionGate? permissionGate = null,
+    ExfiltrationGuard? exfiltrationGuard = null) : BackgroundService
 {
+    private const int MaxToolRounds = 6;
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> active = new();
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource<bool>> pendingApprovals = new();
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     public SemaphoreSlim MutationGate { get; } = new(1, 1);
     private CancellationToken hostStopping;
@@ -100,6 +107,26 @@ public sealed class ChatRunner(
         return changed > 0 || await db.ChatRuns.AnyAsync(x => x.Id == runId, ct);
     }
 
+    public async Task<bool> ResolveEventDecisionAsync(Guid runId, Guid eventId, bool approved, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var updated = await db.ChatRunEvents
+            .Where(x => x.Id == eventId && x.RunId == runId && x.Status == "PendingApproval")
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Status, approved ? "Approved" : "Denied")
+                .SetProperty(x => x.EventType, "approval.resolved")
+                .SetProperty(x => x.CompletedUtc, approved ? null : now), ct);
+
+        if (updated == 0)
+            return false;
+
+        if (pendingApprovals.TryRemove(eventId, out var tcs))
+            tcs.TrySetResult(approved);
+
+        return true;
+    }
+
     public async Task RunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var answer = string.Empty;
@@ -119,7 +146,10 @@ public sealed class ChatRunner(
             var user = run.Messages.Single(x => x.Role == ChatMessageRole.User);
             Guid? interruptedRunId = null;
             string? harnessMode = run.Conversation.SelectedHarnessMode ?? run.Conversation.AgentDefinition.DefaultHarnessMode;
-            string? workingDirectory = null;
+            string? workingDirectory = run.Conversation.WorkspaceRootPath;
+            var permissionPolicy = PermissionPolicies.Normalize(
+                run.Conversation.PermissionPolicyOverride ?? run.Conversation.AgentDefinition.PermissionPolicy);
+            var enabledServers = ParseToolIds(run.Conversation.AgentDefinition.EnabledToolIdsJson);
             var instructions = run.InstructionsSnapshot;
             if (run.SettingsSnapshotJson is { } settings)
             {
@@ -184,39 +214,77 @@ public sealed class ChatRunner(
                 ?? throw new BackingEngineException("provider_unavailable", $"Provider '{run.ProviderId}' is not registered.");
             engineKind = engine.EngineKind;
 
-            var engineRequest = new BackingEngineRequest(
-                run.Id,
-                run.ConversationId,
-                run.ProviderId,
-                run.ModelId,
-                harnessMode,
-                instructions,
-                engineMessages,
-                workingDirectory);
+            var enabledTools = mcpRegistry is not null
+                ? await mcpRegistry.GetEnabledToolsForMemberAsync(enabledServers, cancellationToken)
+                : [];
+            var toolByQualifiedName = enabledTools.ToDictionary(t => t.QualifiedName, StringComparer.OrdinalIgnoreCase);
+            var toolTurns = new List<BackingEngineToolTurn>();
+            var eventSequence = 0;
 
             var lastCheckpoint = timeProvider.GetUtcNow().UtcDateTime;
             var checkpointLength = 0;
 
-            await engine.StreamTurnAsync(engineRequest, async (chunk, ct) =>
+            for (var round = 0; round < MaxToolRounds; round++)
             {
-                if (!string.IsNullOrEmpty(chunk.DeltaText))
-                {
-                    answer += chunk.DeltaText;
-                    if (answer.Length > 131072)
-                        throw new BackingEngineException("output_limit", "Assistant output exceeded maximum length.");
+                IReadOnlyList<BackingEngineToolCall>? requestedCalls = null;
 
-                    var now = timeProvider.GetUtcNow().UtcDateTime;
-                    if (answer.Length - checkpointLength >= 1024 || (answer.Length > checkpointLength && now - lastCheckpoint >= TimeSpan.FromMilliseconds(400)))
+                var engineRequest = new BackingEngineRequest(
+                    run.Id,
+                    run.ConversationId,
+                    run.ProviderId,
+                    run.ModelId,
+                    harnessMode,
+                    instructions,
+                    engineMessages,
+                    workingDirectory,
+                    enabledTools,
+                    toolTurns);
+
+                await engine.StreamTurnAsync(engineRequest, async (chunk, ct) =>
+                {
+                    if (!string.IsNullOrEmpty(chunk.DeltaText))
                     {
-                        await SaveCheckpointAsync(runId, answer, ct);
-                        checkpointLength = answer.Length;
-                        lastCheckpoint = now;
+                        answer += chunk.DeltaText;
+                        if (answer.Length > 131072)
+                            throw new BackingEngineException("output_limit", "Assistant output exceeded maximum length.");
+
+                        var now = timeProvider.GetUtcNow().UtcDateTime;
+                        if (answer.Length - checkpointLength >= 1024 || (answer.Length > checkpointLength && now - lastCheckpoint >= TimeSpan.FromMilliseconds(400)))
+                        {
+                            await SaveCheckpointAsync(runId, answer, ct);
+                            checkpointLength = answer.Length;
+                            lastCheckpoint = now;
+                        }
                     }
+
+                    if (chunk.ToolCalls is { Count: > 0 })
+                        requestedCalls = chunk.ToolCalls;
+
+                    if (chunk.Usage is not null)
+                        usage = chunk.Usage;
+                }, cancellationToken);
+
+                if (requestedCalls is null || requestedCalls.Count == 0 || mcpRegistry is null || permissionGate is null)
+                    break;
+
+                var roundResults = new List<BackingEngineToolResult>(requestedCalls.Count);
+                foreach (var call in requestedCalls)
+                {
+                    eventSequence++;
+                    var toolResult = await ExecuteToolCallWithGateAsync(
+                        runId,
+                        eventSequence,
+                        call,
+                        toolByQualifiedName,
+                        enabledServers,
+                        permissionPolicy,
+                        workingDirectory,
+                        cancellationToken);
+                    roundResults.Add(toolResult);
                 }
 
-                if (chunk.Usage is not null)
-                    usage = chunk.Usage;
-            }, cancellationToken);
+                toolTurns.Add(new BackingEngineToolTurn(requestedCalls, roundResults));
+            }
 
             var elapsedMs = (long)timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
             await FinishAsync(runId, answer, ChatRunStatus.Completed, null, engineKind, usage, elapsedMs);
@@ -249,6 +317,134 @@ public sealed class ChatRunner(
             await db.ChatMessages.Where(x => x.RunId == id && x.Role == ChatMessageRole.Assistant)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Text, text), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<BackingEngineToolResult> ExecuteToolCallWithGateAsync(
+        Guid runId,
+        int sequenceNumber,
+        BackingEngineToolCall call,
+        IReadOnlyDictionary<string, McpToolDescriptor> toolByQualifiedName,
+        IReadOnlySet<string> enabledServers,
+        string permissionPolicy,
+        string? workspaceRootPath,
+        CancellationToken cancellationToken)
+    {
+        var (serverId, toolName) = ResolveServerAndTool(call.QualifiedName, toolByQualifiedName);
+        var descriptor = toolByQualifiedName.GetValueOrDefault(call.QualifiedName);
+        var securityTier = descriptor?.SecurityTier ?? ToolSecurityTiers.Tier3;
+        var rawArgs = call.Arguments.ValueKind == JsonValueKind.Undefined ? "{}" : call.Arguments.GetRawText();
+        var redactedArgs = exfiltrationGuard?.TruncateAndRedact(rawArgs, 8000) ?? rawArgs;
+
+        var eventId = Guid.NewGuid();
+        var createdUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var toolStartedAt = timeProvider.GetTimestamp();
+
+        var decision = permissionGate!.Evaluate(
+            permissionPolicy,
+            enabledServers,
+            serverId,
+            toolName,
+            securityTier,
+            rawArgs);
+
+        var initialStatus = decision.Outcome switch
+        {
+            GateOutcome.Allow => "Running",
+            GateOutcome.RequireApproval => "PendingApproval",
+            _ => "Denied",
+        };
+        var initialEventType = decision.Outcome == GateOutcome.RequireApproval ? "approval.requested" : "tool.requested";
+
+        await using (var db = await factory.CreateDbContextAsync(cancellationToken))
+        {
+            db.ChatRunEvents.Add(new ChatRunEvent
+            {
+                Id = eventId,
+                RunId = runId,
+                SequenceNumber = sequenceNumber,
+                EventType = initialEventType,
+                ServerId = serverId,
+                ToolName = toolName,
+                SecurityTier = securityTier,
+                Status = initialStatus,
+                ArgumentsRedactedJson = redactedArgs,
+                ResultRedactedJson = decision.Outcome == GateOutcome.Deny ? decision.Reason : null,
+                ErrorCode = decision.ErrorCode,
+                CreatedUtc = createdUtc,
+                CompletedUtc = decision.Outcome == GateOutcome.Deny ? createdUtc : null,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (decision.Outcome == GateOutcome.Deny)
+            return new BackingEngineToolResult(call.CallId, call.QualifiedName, decision.Reason ?? "Tool denied.", IsError: true);
+
+        if (decision.Outcome == GateOutcome.RequireApproval)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pendingApprovals[eventId] = tcs;
+            try
+            {
+                using var reg = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+                var approved = await tcs.Task;
+                if (!approved)
+                    return new BackingEngineToolResult(call.CallId, call.QualifiedName, "User denied this tool execution.", IsError: true);
+            }
+            finally
+            {
+                pendingApprovals.TryRemove(eventId, out _);
+            }
+        }
+
+        var result = await mcpRegistry!.InvokeToolAsync(
+            new McpToolCallRequest(serverId, toolName, call.Arguments, workspaceRootPath),
+            cancellationToken);
+
+        var durationMs = (long)timeProvider.GetElapsedTime(toolStartedAt).TotalMilliseconds;
+        var completedUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var redactedResult = exfiltrationGuard?.TruncateAndRedact(result.Content, 16000) ?? result.Content;
+
+        await using (var db = await factory.CreateDbContextAsync(cancellationToken))
+        {
+            await db.ChatRunEvents
+                .Where(x => x.Id == eventId)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(x => x.EventType, result.IsError ? "tool.failed" : "tool.completed")
+                    .SetProperty(x => x.Status, result.IsError ? "Failed" : "Completed")
+                    .SetProperty(x => x.ResultRedactedJson, redactedResult)
+                    .SetProperty(x => x.ErrorCode, result.ErrorCode)
+                    .SetProperty(x => x.DurationMs, durationMs)
+                    .SetProperty(x => x.CompletedUtc, completedUtc), cancellationToken);
+        }
+
+        return new BackingEngineToolResult(call.CallId, call.QualifiedName, redactedResult, result.IsError);
+    }
+
+    private static (string ServerId, string ToolName) ResolveServerAndTool(
+        string qualifiedName,
+        IReadOnlyDictionary<string, McpToolDescriptor> toolByQualifiedName)
+    {
+        if (toolByQualifiedName.TryGetValue(qualifiedName, out var descriptor))
+            return (descriptor.ServerId, descriptor.Name);
+
+        var sep = qualifiedName.IndexOf("__", StringComparison.Ordinal);
+        return sep > 0
+            ? (qualifiedName[..sep], qualifiedName[(sep + 2)..])
+            : ("unknown", qualifiedName);
+    }
+
+    private static HashSet<string> ParseToolIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var items = JsonSerializer.Deserialize<string[]>(json);
+            return items is null ? [] : new HashSet<string>(items, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static bool TryReadTextAttachment(ChatAttachment attachment, out string text)

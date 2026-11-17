@@ -97,10 +97,13 @@ internal static class AgentProfileSqlChecks
         var archived = (await archivedResponse.Content.ReadFromJsonAsync<AgentProfileResponse>())!;
         Assert.True(archived.IsArchived);
         Assert.Equal(changed.Revision + 1, archived.Revision);
-        Assert.Equal(changed with { IsArchived = true, Revision = archived.Revision }, archived);
+        Assert.Equal(changed with { IsArchived = true, Revision = archived.Revision, EnabledToolIds = null }, archived with { EnabledToolIds = null });
+        Assert.Equal(changed.EnabledToolIds, archived.EnabledToolIds);
         var repeated = await Lifecycle(true, archived.Revision);
         repeated.EnsureSuccessStatusCode();
-        Assert.Equal(archived, await repeated.Content.ReadFromJsonAsync<AgentProfileResponse>());
+        var repeatedProfile = (await repeated.Content.ReadFromJsonAsync<AgentProfileResponse>())!;
+        Assert.Equal(archived with { EnabledToolIds = null }, repeatedProfile with { EnabledToolIds = null });
+        Assert.Equal(archived.EnabledToolIds, repeatedProfile.EnabledToolIds);
         var rejected = await client.PostAsJsonAsync("/conversations", new CreateConversationRequest("must not create", null, changed.Id));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
         Assert.Equal("member_archived", (await rejected.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
@@ -122,7 +125,8 @@ internal static class AgentProfileSqlChecks
         restoredResponse.EnsureSuccessStatusCode();
         var restored = (await restoredResponse.Content.ReadFromJsonAsync<AgentProfileResponse>())!;
         Assert.False(restored.IsArchived);
-        Assert.Equal(changed with { Revision = archived.Revision + 1 }, restored);
+        Assert.Equal(changed with { Revision = archived.Revision + 1, EnabledToolIds = null }, restored with { EnabledToolIds = null });
+        Assert.Equal(changed.EnabledToolIds, restored.EnabledToolIds);
         await NewSession(changed.Id);
         var staleDelete = await client.DeleteAsync($"/agents/{changed.Id}?expectedRevision={restored.Revision - 1}");
         Assert.Equal(HttpStatusCode.Conflict, staleDelete.StatusCode);

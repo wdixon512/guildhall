@@ -74,8 +74,10 @@ builder.Services.AddSingleton<IBackingEngine, OllamaBackingEngine>();
 builder.Services.AddSingleton<IBackingEngine, OpenAiCloudEngine>();
 builder.Services.AddSingleton<IBackingEngine, GeminiCloudEngine>();
 builder.Services.AddSingleton<IBackingEngine, AnthropicCloudEngine>();
-foreach (var descriptor in CliHarnessDescriptors.All)
-    builder.Services.AddSingleton<IBackingEngine>(sp => new CliHarnessEngine(descriptor, sp.GetRequiredService<ICliProcessRunner>(), sp.GetRequiredService<EnvironmentScrubber>()));
+builder.Services.AddSingleton<IBackingEngine, AgyCliEngine>();
+builder.Services.AddSingleton<IBackingEngine, CodexCliEngine>();
+builder.Services.AddSingleton<IBackingEngine, ClaudeCliEngine>();
+builder.Services.AddSingleton<IBackingEngine, CursorCliEngine>();
 builder.Services.AddSingleton<IBackingEngineRegistry, BackingEngineRegistry>();
 builder.Services.AddSingleton<ConnectionCatalogService>();
 builder.Services.AddSingleton<ChatRunner>();

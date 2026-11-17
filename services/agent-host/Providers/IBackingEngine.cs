@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Guildhall.AgentHost.Mcp;
+
 namespace Guildhall.AgentHost.Providers;
 
 public static class BackingEngineKinds
@@ -27,6 +30,21 @@ public sealed record BackingEngineMessage(
     string Text,
     IReadOnlyList<BackingEngineAttachment> Attachments);
 
+public sealed record BackingEngineToolCall(
+    string CallId,
+    string QualifiedName,
+    JsonElement Arguments);
+
+public sealed record BackingEngineToolResult(
+    string CallId,
+    string QualifiedName,
+    string Output,
+    bool IsError);
+
+public sealed record BackingEngineToolTurn(
+    IReadOnlyList<BackingEngineToolCall> Calls,
+    IReadOnlyList<BackingEngineToolResult> Results);
+
 public sealed record BackingEngineRequest(
     Guid RunId,
     Guid ConversationId,
@@ -35,7 +53,9 @@ public sealed record BackingEngineRequest(
     string? HarnessMode,
     string SystemPrompt,
     IReadOnlyList<BackingEngineMessage> Messages,
-    string? WorkingDirectory = null);
+    string? WorkingDirectory = null,
+    IReadOnlyList<McpToolDescriptor>? Tools = null,
+    IReadOnlyList<BackingEngineToolTurn>? ToolTurns = null);
 
 public sealed record BackingEngineUsage(
     int? InputTokens,
@@ -47,7 +67,8 @@ public sealed record BackingEngineChunk(
     string? DeltaText = null,
     string? ThinkingText = null,
     BackingEngineUsage? Usage = null,
-    bool IsComplete = false);
+    bool IsComplete = false,
+    IReadOnlyList<BackingEngineToolCall>? ToolCalls = null);
 
 public sealed class BackingEngineException(string errorCode, string message, Exception? innerException = null)
     : InvalidOperationException(message, innerException)

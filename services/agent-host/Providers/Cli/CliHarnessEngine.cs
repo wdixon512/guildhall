@@ -1,16 +1,22 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Guildhall.AgentHost.Configuration;
 
 namespace Guildhall.AgentHost.Providers.Cli;
 
-public sealed class CliHarnessEngine(
+public abstract partial class CliHarnessEngineBase(
     CliHarnessDescriptor descriptor,
     ICliProcessRunner processRunner,
     EnvironmentScrubber environmentScrubber) : IBackingEngine
 {
     public string ProviderId => descriptor.ProviderId;
     public string EngineKind => BackingEngineKinds.CliHarness;
+
+    protected CliHarnessDescriptor Descriptor => descriptor;
+
+    [GeneratedRegex(@"```guildhall-tool-call\s*(\{[\s\S]*?\})\s*```", RegexOptions.Compiled)]
+    private static partial Regex ToolCallBlockRegex();
 
     public async Task StreamTurnAsync(
         BackingEngineRequest request,
@@ -25,11 +31,12 @@ public sealed class CliHarnessEngine(
             : Environment.CurrentDirectory;
 
         var prompt = BuildCompositePrompt(request);
-        var usesInlinePrompt = string.Equals(ProviderId, "agy-cli", StringComparison.OrdinalIgnoreCase);
+        var usesInlinePrompt = UsesInlinePrompt;
         var args = CliHarnessDescriptors.BuildRunArguments(ProviderId, request.ModelId, request.HarnessMode, workDir, usesInlinePrompt ? prompt : null);
         var env = environmentScrubber.BuildScrubbedEnvironment();
         var stderrBuffer = new StringBuilder();
         var sawDelta = false;
+        var accumulated = new StringBuilder();
         int? inputTokens = null;
         int? outputTokens = null;
 
@@ -44,6 +51,7 @@ public sealed class CliHarnessEngine(
                 if (string.IsNullOrWhiteSpace(line)) return;
                 if (!line.TrimStart().StartsWith('{'))
                 {
+                    accumulated.Append(line).Append('\n');
                     await onChunk(new BackingEngineChunk(DeltaText: line + "\n"), ct);
                     sawDelta = true;
                     return;
@@ -53,43 +61,22 @@ public sealed class CliHarnessEngine(
                 {
                     using var json = JsonDocument.Parse(line);
                     var root = json.RootElement;
-                    var delta = ExtractTextDelta(root);
+                    var delta = ExtractTextDeltaForHarness(root);
                     if (!string.IsNullOrEmpty(delta))
                     {
                         sawDelta = true;
-                        await onChunk(new BackingEngineChunk(DeltaText: delta), ct);
+                        accumulated.Append(delta);
+                        if (!HasToolCallMarker(accumulated.ToString()))
+                            await onChunk(new BackingEngineChunk(DeltaText: delta), ct);
                     }
-                    else if (!sawDelta &&
-                             root.TryGetProperty("event", out var evProp) &&
-                             evProp.GetString() == "result" &&
-                             root.TryGetProperty("result", out var resProp) &&
-                             resProp.ValueKind == JsonValueKind.Object &&
-                             resProp.TryGetProperty("denied_actions", out var deniedProp) &&
-                             deniedProp.ValueKind == JsonValueKind.Array &&
-                             deniedProp.GetArrayLength() > 0)
+                    else if (!sawDelta && IsPermissionDeniedEvent(root))
                     {
                         throw new BackingEngineException(
                             "cli_permission_denied",
                             $"{descriptor.DisplayName} attempted a tool action that was denied in headless mode.");
                     }
 
-                    if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
-                    {
-                        if (usage.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var inTok))
-                            inputTokens = inTok;
-                        if (usage.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var outTok))
-                            outputTokens = outTok;
-                    }
-                    else if (root.TryGetProperty("result", out var resultObj) &&
-                             resultObj.ValueKind == JsonValueKind.Object &&
-                             resultObj.TryGetProperty("usage", out var nestedUsage) &&
-                             nestedUsage.ValueKind == JsonValueKind.Object)
-                    {
-                        if (nestedUsage.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var inTok))
-                            inputTokens = inTok;
-                        if (nestedUsage.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var outTok))
-                            outputTokens = outTok;
-                    }
+                    ExtractUsage(root, ref inputTokens, ref outputTokens);
                 }
                 catch (JsonException)
                 {
@@ -112,10 +99,46 @@ public sealed class CliHarnessEngine(
             throw new BackingEngineException("provider_error", $"{descriptor.DisplayName} exited with code {exitCode}.");
         }
 
+        IReadOnlyList<BackingEngineToolCall>? requestedCalls = null;
+        if (request.Tools is { Count: > 0 } && accumulated.Length > 0)
+        {
+            var matches = ToolCallBlockRegex().Matches(accumulated.ToString());
+            if (matches.Count > 0)
+            {
+                var calls = new List<BackingEngineToolCall>();
+                foreach (Match match in matches)
+                {
+                    try
+                    {
+                        using var callDoc = JsonDocument.Parse(match.Groups[1].Value);
+                        var name = callDoc.RootElement.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        var toolArgs = callDoc.RootElement.TryGetProperty("arguments", out var aEl)
+                            ? aEl.Clone()
+                            : JsonDocument.Parse("{}").RootElement.Clone();
+                        calls.Add(new BackingEngineToolCall(Guid.NewGuid().ToString("N"), name, toolArgs));
+                    }
+                    catch (JsonException)
+                    {
+                        // Ignore malformed tool call block.
+                    }
+                }
+                if (calls.Count > 0)
+                    requestedCalls = calls;
+            }
+        }
+
         await onChunk(new BackingEngineChunk(
             Usage: new BackingEngineUsage(inputTokens, outputTokens, null, CostSources.SubscriptionCli),
-            IsComplete: true), cancellationToken);
+            IsComplete: true,
+            ToolCalls: requestedCalls), cancellationToken);
     }
+
+    protected virtual bool UsesInlinePrompt => false;
+
+    protected virtual bool IsPermissionDeniedEvent(JsonElement root) => false;
+
+    protected virtual string? ExtractTextDeltaForHarness(JsonElement root) => ExtractTextDelta(root);
 
     internal static string BuildCompositePrompt(BackingEngineRequest request)
     {
@@ -124,6 +147,28 @@ public sealed class CliHarnessEngine(
         {
             sb.AppendLine("[Guildhall System Context]");
             sb.AppendLine(request.SystemPrompt.Trim());
+            sb.AppendLine();
+        }
+
+        if (request.Tools is { Count: > 0 })
+        {
+            sb.AppendLine("[Guildhall MCP Tools Available]");
+            sb.AppendLine("To invoke an authorized Guildhall MCP tool, respond ONLY with one or more ```guildhall-tool-call {\"name\":\"<qualifiedName>\",\"arguments\":{...}} ``` blocks.");
+            foreach (var tool in request.Tools)
+                sb.AppendLine($"- {tool.QualifiedName} ({tool.SecurityTier}): {tool.Description} Schema: {tool.InputSchema.GetRawText()}");
+            sb.AppendLine();
+        }
+
+        if (request.ToolTurns is { Count: > 0 })
+        {
+            sb.AppendLine("[Tool Execution History]");
+            foreach (var turn in request.ToolTurns)
+            {
+                foreach (var call in turn.Calls)
+                    sb.AppendLine($"Tool Call {call.QualifiedName}: {call.Arguments.GetRawText()}");
+                foreach (var res in turn.Results)
+                    sb.AppendLine($"Tool Result ({res.QualifiedName}, error={res.IsError}): {res.Output}");
+            }
             sb.AppendLine();
         }
 
@@ -203,10 +248,52 @@ public sealed class CliHarnessEngine(
         return null;
     }
 
+    private static bool HasToolCallMarker(string text) =>
+        text.Contains("```guildhall-tool-call", StringComparison.Ordinal);
+
+    private static void ExtractUsage(JsonElement root, ref int? inputTokens, ref int? outputTokens)
+    {
+        if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
+        {
+            if (usage.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var inTok))
+                inputTokens = inTok;
+            if (usage.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var outTok))
+                outputTokens = outTok;
+        }
+        else if (root.TryGetProperty("result", out var resultObj) &&
+                 resultObj.ValueKind == JsonValueKind.Object &&
+                 resultObj.TryGetProperty("usage", out var nestedUsage) &&
+                 nestedUsage.ValueKind == JsonValueKind.Object)
+        {
+            if (nestedUsage.TryGetProperty("input_tokens", out var inEl) && inEl.TryGetInt32(out var inTok))
+                inputTokens = inTok;
+            if (nestedUsage.TryGetProperty("output_tokens", out var outEl) && outEl.TryGetInt32(out var outTok))
+                outputTokens = outTok;
+        }
+    }
+
     private static bool LooksLikeAuthError(string stderr) =>
         stderr.Contains("login", StringComparison.OrdinalIgnoreCase) ||
         stderr.Contains("auth", StringComparison.OrdinalIgnoreCase) ||
         stderr.Contains("unauthorized", StringComparison.OrdinalIgnoreCase) ||
         stderr.Contains("sign in", StringComparison.OrdinalIgnoreCase) ||
         stderr.Contains("API_KEY", StringComparison.OrdinalIgnoreCase);
+}
+
+public sealed class CliHarnessEngine(
+    CliHarnessDescriptor descriptor,
+    ICliProcessRunner processRunner,
+    EnvironmentScrubber environmentScrubber) : CliHarnessEngineBase(descriptor, processRunner, environmentScrubber)
+{
+    protected override bool UsesInlinePrompt =>
+        string.Equals(ProviderId, "agy-cli", StringComparison.OrdinalIgnoreCase);
+
+    protected override bool IsPermissionDeniedEvent(JsonElement root) =>
+        root.TryGetProperty("event", out var evProp) &&
+        evProp.GetString() == "result" &&
+        root.TryGetProperty("result", out var resProp) &&
+        resProp.ValueKind == JsonValueKind.Object &&
+        resProp.TryGetProperty("denied_actions", out var deniedProp) &&
+        deniedProp.ValueKind == JsonValueKind.Array &&
+        deniedProp.GetArrayLength() > 0;
 }

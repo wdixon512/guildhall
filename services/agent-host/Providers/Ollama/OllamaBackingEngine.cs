@@ -39,6 +39,26 @@ public sealed class OllamaBackingEngine(
                 messages.Add(new { role = message.Role, content = message.Text });
         }
 
+        if (request.ToolTurns is { Count: > 0 })
+        {
+            foreach (var turn in request.ToolTurns)
+            {
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = string.Empty,
+                    tool_calls = turn.Calls.Select(c => new
+                    {
+                        function = new { name = c.QualifiedName, arguments = c.Arguments }
+                    }).ToArray()
+                });
+                foreach (var res in turn.Results)
+                {
+                    messages.Add(new { role = "tool", content = res.Output });
+                }
+            }
+        }
+
         if (hasImages)
         {
             using var modelResponse = await clients.CreateClient("ollama-chat")
@@ -63,14 +83,27 @@ public sealed class OllamaBackingEngine(
         if (!useGpu) options["num_gpu"] = 0;
 
         var keepAliveSeconds = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
-        var payload = new
+        var payload = new Dictionary<string, object>
         {
-            model = request.ModelId,
-            stream = true,
-            messages,
-            options,
-            keep_alive = keepAliveSeconds
+            ["model"] = request.ModelId,
+            ["stream"] = true,
+            ["messages"] = messages,
+            ["options"] = options,
+            ["keep_alive"] = keepAliveSeconds
         };
+        if (request.Tools is { Count: > 0 })
+        {
+            payload["tools"] = request.Tools.Select(t => new
+            {
+                type = "function",
+                function = new
+                {
+                    name = t.QualifiedName,
+                    description = t.Description,
+                    parameters = t.InputSchema
+                }
+            }).ToArray();
+        }
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/chat")
         {
@@ -110,6 +143,23 @@ public sealed class OllamaBackingEngine(
                     var prefix = inThinking ? "</think>" : string.Empty;
                     inThinking = false;
                     await onChunk(new BackingEngineChunk(DeltaText: prefix + delta), cancellationToken);
+                }
+
+                if (message.TryGetProperty("tool_calls", out var toolCallsEl) && toolCallsEl.ValueKind == JsonValueKind.Array)
+                {
+                    var calls = new List<BackingEngineToolCall>();
+                    foreach (var tc in toolCallsEl.EnumerateArray())
+                    {
+                        if (!tc.TryGetProperty("function", out var fn)) continue;
+                        var name = fn.TryGetProperty("name", out var n) ? n.GetString() : null;
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        var args = fn.TryGetProperty("arguments", out var a)
+                            ? a.Clone()
+                            : JsonDocument.Parse("{}").RootElement.Clone();
+                        calls.Add(new BackingEngineToolCall(Guid.NewGuid().ToString("N"), name, args));
+                    }
+                    if (calls.Count > 0)
+                        await onChunk(new BackingEngineChunk(ToolCalls: calls), cancellationToken);
                 }
             }
 

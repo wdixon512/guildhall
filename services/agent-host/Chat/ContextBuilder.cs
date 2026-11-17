@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using System.Text.Json;
 using Guildhall.AgentHost.Api;
+using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -35,7 +37,9 @@ public sealed record ContextAssemblyResult(
     int RetainedHistoryChars,
     CrossTurnBudgetSummary Budget,
     string? ErrorCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    int EstimatedToolSchemaTokens = 0,
+    int EnabledToolCount = 0);
 
 public interface IContextBuilder
 {
@@ -55,7 +59,8 @@ public interface IContextBuilder
 
 public sealed class ContextBuilder(
     IOptionsMonitor<CrossTurnBudgetOptions> budgetOptions,
-    Lazy<IPreambleCacheService> preambleCache) : IContextBuilder
+    Lazy<IPreambleCacheService> preambleCache,
+    Lazy<McpRegistry>? mcpRegistry = null) : IContextBuilder
 {
     public int EstimateTokens(string? text)
     {
@@ -132,9 +137,20 @@ public sealed class ContextBuilder(
             globalGuidelines?.Body,
             instructionsSnapshot,
             selectedNotes.Select(x => (x.Scope, x.Body)).ToList());
+        var toolSchemaTokens = 0;
+        var enabledToolCount = 0;
+        if (mcpRegistry is not null)
+        {
+            var enabledServers = ParseToolIds(conversation.AgentDefinition.EnabledToolIdsJson);
+            var enabledTools = await mcpRegistry.Value.GetEnabledToolsForMemberAsync(enabledServers, ct);
+            enabledToolCount = enabledTools.Count;
+            foreach (var tool in enabledTools)
+                toolSchemaTokens += EstimateTokens(tool.QualifiedName + tool.Description + tool.InputSchema.GetRawText());
+        }
+
         var systemTokens = EstimateTokens(staticSystem);
         var incomingTokens = EstimateTokens(incomingUserText);
-        var estimatedNextTurnTokens = systemTokens + historyTokens + incomingTokens;
+        var estimatedNextTurnTokens = systemTokens + historyTokens + incomingTokens + toolSchemaTokens;
         var estimatedSessionTokens = historyTokens + incomingTokens;
 
         var options = budgetOptions.CurrentValue;
@@ -174,7 +190,23 @@ public sealed class ContextBuilder(
             historyChars,
             budget,
             errorCode,
-            errorMessage);
+            errorMessage,
+            toolSchemaTokens,
+            enabledToolCount);
+    }
+
+    private static HashSet<string> ParseToolIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            var items = JsonSerializer.Deserialize<string[]>(json);
+            return items is null ? [] : new HashSet<string>(items, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     public string BuildStaticSystemMessage(

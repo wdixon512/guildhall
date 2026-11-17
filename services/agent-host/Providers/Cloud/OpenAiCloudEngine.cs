@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Guildhall.AgentHost.Configuration;
 
@@ -42,13 +43,53 @@ public sealed class OpenAiCloudEngine(
             messages.Add(new { role = message.Role, content = parts });
         }
 
-        var payload = new
+        if (request.ToolTurns is { Count: > 0 })
         {
-            model = string.IsNullOrWhiteSpace(request.ModelId) ? "gpt-4.1-mini" : request.ModelId,
-            stream = true,
-            stream_options = new { include_usage = true },
-            messages
+            foreach (var turn in request.ToolTurns)
+            {
+                messages.Add(new
+                {
+                    role = "assistant",
+                    content = (string?)null,
+                    tool_calls = turn.Calls.Select(c => new
+                    {
+                        id = c.CallId,
+                        type = "function",
+                        function = new { name = c.QualifiedName, arguments = c.Arguments.GetRawText() }
+                    }).ToArray()
+                });
+                foreach (var res in turn.Results)
+                {
+                    messages.Add(new
+                    {
+                        role = "tool",
+                        tool_call_id = res.CallId,
+                        content = res.Output
+                    });
+                }
+            }
+        }
+
+        var payload = new Dictionary<string, object>
+        {
+            ["model"] = string.IsNullOrWhiteSpace(request.ModelId) ? "gpt-4.1-mini" : request.ModelId,
+            ["stream"] = true,
+            ["stream_options"] = new { include_usage = true },
+            ["messages"] = messages
         };
+        if (request.Tools is { Count: > 0 })
+        {
+            payload["tools"] = request.Tools.Select(t => new
+            {
+                type = "function",
+                function = new
+                {
+                    name = t.QualifiedName,
+                    description = t.Description,
+                    parameters = t.InputSchema
+                }
+            }).ToArray();
+        }
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
         {
@@ -63,6 +104,7 @@ public sealed class OpenAiCloudEngine(
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         int? inputTokens = null;
         int? outputTokens = null;
+        var pendingCalls = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
 
         await foreach (var data in SseStreamReader.ReadDataEventsAsync(stream, cancellationToken))
         {
@@ -72,12 +114,35 @@ public sealed class OpenAiCloudEngine(
             if (json.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
             {
                 var first = choices[0];
-                if (first.TryGetProperty("delta", out var deltaEl) &&
-                    deltaEl.TryGetProperty("content", out var contentEl))
+                if (first.TryGetProperty("delta", out var deltaEl))
                 {
-                    var delta = contentEl.GetString();
-                    if (!string.IsNullOrEmpty(delta))
-                        await onChunk(new BackingEngineChunk(DeltaText: delta), cancellationToken);
+                    if (deltaEl.TryGetProperty("content", out var contentEl))
+                    {
+                        var delta = contentEl.GetString();
+                        if (!string.IsNullOrEmpty(delta))
+                            await onChunk(new BackingEngineChunk(DeltaText: delta), cancellationToken);
+                    }
+
+                    if (deltaEl.TryGetProperty("tool_calls", out var tcArray) && tcArray.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var tc in tcArray.EnumerateArray())
+                        {
+                            var idx = tc.TryGetProperty("index", out var idxEl) && idxEl.TryGetInt32(out var i) ? i : 0;
+                            if (!pendingCalls.TryGetValue(idx, out var entry))
+                                entry = (Guid.NewGuid().ToString("N"), string.Empty, new StringBuilder());
+
+                            if (tc.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } idStr)
+                                entry.Id = idStr;
+                            if (tc.TryGetProperty("function", out var fn))
+                            {
+                                if (fn.TryGetProperty("name", out var nEl) && nEl.GetString() is { Length: > 0 } nStr)
+                                    entry.Name += nStr;
+                                if (fn.TryGetProperty("arguments", out var aEl) && aEl.GetString() is { Length: > 0 } aStr)
+                                    entry.Args.Append(aStr);
+                            }
+                            pendingCalls[idx] = entry;
+                        }
+                    }
                 }
             }
 
@@ -90,8 +155,20 @@ public sealed class OpenAiCloudEngine(
             }
         }
 
+        IReadOnlyList<BackingEngineToolCall>? finalizedCalls = null;
+        if (pendingCalls.Count > 0)
+        {
+            finalizedCalls = pendingCalls.OrderBy(kv => kv.Key).Select(kv =>
+            {
+                var rawArgs = kv.Value.Args.Length > 0 ? kv.Value.Args.ToString() : "{}";
+                var parsed = JsonDocument.Parse(rawArgs).RootElement.Clone();
+                return new BackingEngineToolCall(kv.Value.Id, kv.Value.Name, parsed);
+            }).ToArray();
+        }
+
         await onChunk(new BackingEngineChunk(
             Usage: new BackingEngineUsage(inputTokens, outputTokens, null, CostSources.MeasuredApi),
-            IsComplete: true), cancellationToken);
+            IsComplete: true,
+            ToolCalls: finalizedCalls), cancellationToken);
     }
 }
