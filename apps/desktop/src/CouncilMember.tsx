@@ -62,7 +62,15 @@ export function toInstructionSlug(name: string): string {
   return slug || 'guild-member';
 }
 
-export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0 }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number }) {
+const MCP_TOOL_OPTIONS = [
+  { id: 'filesystem-mcp', label: 'Local Filesystem (Tier 1)' },
+  { id: 'git-mcp', label: 'Local Git (Tier 1)' },
+  { id: 'github-mcp', label: 'GitHub (Tier 1/3)' },
+  { id: 'google-drive-mcp', label: 'Google Drive (Tier 1)' },
+  { id: 'gmail-mcp', label: 'Gmail (Tier 1/3)' },
+] as const;
+
+export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0, enabledToolIds = ['filesystem-mcp', 'git-mcp'], permissionPolicy = 'ask_unsafe', onUpdateToolPolicy }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number; enabledToolIds?: string[]; permissionPolicy?: string; onUpdateToolPolicy?: (enabledToolIds: string[], permissionPolicy: string) => void }) {
   const picker = useRef<HTMLInputElement>(null);
   const markdownPicker = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -198,6 +206,45 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
       <small>Markdown text included for this member’s future replies. Changes apply to new messages. {identity.instructions.length}/8192</small>
     </section>
     <section className="member-section expression-preview"><label>Expressions<select aria-label="Preview expression" value={previewExpression} disabled={!!identity.customPortrait} onChange={event => setPreviewExpression(event.target.value as PortraitExpression | 'auto')}><option value="auto">Follow activity</option>{expressions.map(expression => <option key={expression} value={expression}>{expression.charAt(0).toUpperCase() + expression.slice(1)}</option>)}</select></label><small>{identity.customPortrait ? 'Uploaded portraits stay static.' : 'Preview a pose here. Live replies use pondering, then idea as text arrives. Research and other expressions are reserved for future activity signals.'}</small></section>
+    {profileId && onUpdateToolPolicy && (
+      <section className="member-section member-tools-policy" aria-label="MCP tools and permissions">
+        <h3>Allowed MCP tools</h3>
+        <div className="member-tool-checks">
+          {MCP_TOOL_OPTIONS.map(opt => {
+            const checked = enabledToolIds.includes(opt.id);
+            return (
+              <label key={opt.id} className="member-tool-check">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={saving}
+                  onChange={() => {
+                    const next = checked
+                      ? enabledToolIds.filter(id => id !== opt.id)
+                      : [...enabledToolIds, opt.id];
+                    onUpdateToolPolicy(next, permissionPolicy);
+                  }}
+                />
+                <span>{opt.label}</span>
+              </label>
+            );
+          })}
+        </div>
+        <label>
+          Tool permission policy
+          <select
+            aria-label="Tool permission policy"
+            value={permissionPolicy}
+            disabled={saving}
+            onChange={event => onUpdateToolPolicy(enabledToolIds, event.target.value)}
+          >
+            <option value="ask_unsafe">Ask for unsafe actions (Tier 1 auto, Tier 3 ask)</option>
+            <option value="always_ask">Always ask (every tool call)</option>
+            <option value="unrestricted" disabled>Unrestricted / autopilot (Planned Phase 4)</option>
+          </select>
+        </label>
+      </section>
+    )}
     {config && profileId && (
       <section className="member-section">
         <Suspense fallback={<small>Loading member memory…</small>}>

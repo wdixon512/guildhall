@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { request } from './api';
 import type { Bootstrap, ContextInspectorData, VramResidency } from './api';
 
@@ -23,11 +23,20 @@ export function ContextInspector({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [manualTick, setManualTick] = useState(0);
+  const [probingServerId, setProbingServerId] = useState<string | null>(null);
+  const prevConversationId = useRef<string | null>(conversationId);
 
   useEffect(() => {
-    setData(null);
-    setVramOnly(null);
-    if (!config) return;
+    if (prevConversationId.current !== conversationId) {
+      prevConversationId.current = conversationId;
+      setData(null);
+      setVramOnly(null);
+    }
+    if (!config) {
+      setData(null);
+      setVramOnly(null);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError('');
@@ -53,6 +62,19 @@ export function ContextInspector({
     })();
     return () => controller.abort();
   }, [config?.hostUrl, config?.token, conversationId, refreshToken, manualTick]);
+
+  async function reconnectMcp(serverId: string) {
+    if (!config || probingServerId) return;
+    setProbingServerId(serverId);
+    try {
+      await request(config, `/mcp/servers/${serverId}/probe`, new AbortController().signal, { method: 'POST' });
+      setManualTick(value => value + 1);
+    } catch {
+      setError('Could not probe MCP server.');
+    } finally {
+      setProbingServerId(null);
+    }
+  }
 
   const vram = data?.vram ?? vramOnly;
   const sessionPct = data ? Math.min(100, Math.round((data.budget.estimatedSessionTokens / Math.max(1, data.budget.maxSessionTokens)) * 100)) : 0;
@@ -138,8 +160,40 @@ export function ContextInspector({
               <li><span>Global guidelines ({data.globalGuidelinesHash ? data.globalGuidelinesHash.slice(0, 8) : 'none'})</span><span>{data.globalGuidelinesChars} chars</span></li>
               <li><span>Member instructions</span><span>{data.memberInstructionsChars} chars</span></li>
               <li><span>Retained transcript ({data.retainedHistoryTurns} turns)</span><span>{data.retainedHistoryChars} chars</span></li>
+              {(data.enabledToolCount ?? 0) > 0 && (
+                <li><span>Enabled MCP tools ({data.enabledToolCount})</span><span>~{(data.estimatedToolSchemaTokens ?? 0).toLocaleString()}t schemas</span></li>
+              )}
             </ul>
           </div>
+
+          {data.mcpServers && data.mcpServers.length > 0 && (
+            <div className="context-card">
+              <div className="context-card-title">
+                <strong>Tier 5 MCP health</strong>
+                <span>{data.mcpServers.filter(s => s.status === 'Connected').length} / {data.mcpServers.length} connected</span>
+              </div>
+              <ul className="mcp-health-list">
+                {data.mcpServers.map(server => (
+                  <li key={server.serverId}>
+                    <div>
+                      <strong>{server.displayName}</strong>
+                      <small>{server.status}{server.lastError ? ` · ${server.lastError}` : ''}</small>
+                    </div>
+                    {(server.status === 'Degraded' || server.status === 'Failed' || server.status === 'Disconnected') && (
+                      <button
+                        type="button"
+                        aria-label={`Reconnect ${server.displayName}`}
+                        disabled={probingServerId === server.serverId}
+                        onClick={() => void reconnectMcp(server.serverId)}
+                      >
+                        {probingServerId === server.serverId ? 'Reconnecting…' : 'Reconnect'}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="context-card">
             <div className="context-card-title">

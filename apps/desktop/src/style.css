@@ -320,3 +320,32 @@ button.thinking-toggle:hover{color:#eadbc9;border-color:var(--brass)}
 .dropup-trigger-text{display:inline-flex;align-items:center;gap:5px;min-width:0}
 .dropup-prefix{color:#a89687;font-size:11px;flex-shrink:0}
 .dropup-menu-title{padding:4px 8px 6px;font-size:11px;font-weight:600;color:#d2c3b4;border-bottom:1px solid #3c3035;margin-bottom:2px}
+
+/* Phase 3: Run Traces, Approval Cards, MCP Health & Member Tool Policies */
+.run-trace-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.run-trace-item { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; background: rgba(18, 20, 26, 0.72); overflow: hidden; }
+.run-trace-item.status-pendingapproval { border-color: rgba(214, 173, 96, 0.55); }
+.run-trace-item.status-failed, .run-trace-item.status-denied { border-color: rgba(217, 102, 102, 0.45); }
+.run-trace-toggle { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 10px; background: transparent; border: 0; color: inherit; cursor: pointer; text-align: left; font-size: 0.82rem; }
+.run-trace-toggle:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); }
+.run-trace-toggle:focus-visible { outline-offset: -2px; }
+.run-trace-chevron { font-size: 0.75rem; opacity: 0.75; }
+.run-trace-name { font-weight: 600; color: #e6dfd3; min-width: 0; overflow-wrap: anywhere; }
+.run-trace-tier { font-size: 0.74rem; padding: 1px 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); color: #c7bfa8; }
+.run-trace-status { margin-left: auto; font-size: 0.76rem; opacity: 0.82; }
+.run-trace-details { padding: 8px 10px 10px; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; flex-direction: column; gap: 8px; }
+.run-trace-code { margin: 4px 0 0; padding: 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.35); font-size: 0.76rem; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.run-trace-error { color: #e88e8e; }
+.run-approval-card { padding: 10px 12px; border-top: 1px solid rgba(214, 173, 96, 0.35); background: rgba(214, 173, 96, 0.08); display: flex; flex-direction: column; gap: 8px; }
+.run-approval-card p { margin: 0; font-size: 0.86rem; }
+.run-approval-actions { display: flex; gap: 8px; }
+.mcp-health-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mcp-health-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.82rem; }
+.mcp-health-list li div { display: flex; flex-direction: column; min-width: 0; }
+.member-tools-policy label { display: grid; gap: 6px; font-size: 13px; }
+.member-tools-policy select { width: 100%; max-width: 100%; box-sizing: border-box; border: 1px solid #94785b; border-radius: 7px; background: #292126; color: #eadbc9; padding: 8px; font-size: 12px; }
+.member-tool-checks { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.member-tool-check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; cursor: pointer; }
+.workspace-root-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: rgba(20, 22, 28, 0.9); }
+.workspace-root-bar label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 0.82rem; }
+.workspace-root-bar input { flex: 1; min-width: 140px; padding: 6px 9px; border: 1px solid rgba(148, 120, 91, 0.65); border-radius: 7px; background: #292126; color: #eadbc9; font-size: 0.82rem; }

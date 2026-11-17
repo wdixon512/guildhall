@@ -157,6 +157,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900);
   const [showPreview, setShowPreview] = useState(false);
+  const [showWorkspaceBar, setShowWorkspaceBar] = useState(false);
+  const [workspaceRootDraft, setWorkspaceRootDraft] = useState('');
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const wasWideViewport = useRef(window.innerWidth >= 900);
   const [councilWidth, setCouncilWidth] = useState(() => storedPaneWidth('guildhall.pane.council', window.innerWidth >= 1800 ? 310 : window.innerWidth >= 900 ? 290 : 260, 220, 520));
@@ -457,6 +459,7 @@ export default function App() {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
       switchComposerContext(id, details.agent?.id ?? activeAgentId);
       setConversation(details); setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama'); setChosenModel(details.conversation.selectedModelId ?? ''); setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
+      setShowWorkspaceBar(false); setWorkspaceRootDraft(details.conversation.workspaceRootPath ?? '');
       markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       setConversationMenu(null);
@@ -648,6 +651,8 @@ export default function App() {
       setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama');
       setChosenModel(details.conversation.selectedModelId ?? '');
       setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
+      setShowWorkspaceBar(false);
+      setWorkspaceRootDraft(details.conversation.workspaceRootPath ?? '');
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       if (window.innerWidth < 900) setSidebarCollapsed(true);
     } catch { setChatError('Could not open chat. Check the host and database, then try again.'); }
@@ -695,6 +700,81 @@ export default function App() {
 
   async function selectModel(modelId: string) {
     await selectBackingEngine(chosenProvider, modelId);
+  }
+
+  async function resolveToolDecision(runId: string, eventId: string, approved: boolean) {
+    if (!configuration.current || !conversation || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      await request(configuration.current, `/runs/${runId}/events/${eventId}/decision`, new AbortController().signal, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved }),
+      });
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      setConversation(updated);
+    } catch {
+      setChatError('Could not submit tool approval decision.');
+    } finally {
+      chatOperation.current = false; setChatBusy(false);
+    }
+  }
+
+  async function updateMemberToolPolicy(enabledToolIds: string[], permissionPolicy: string) {
+    if (!configuration.current || !activeProfile || profileMutation.current) return;
+    profileMutation.current = true;
+    setProfileSavingId(activeProfile.id);
+    setProfileError('');
+    try {
+      const currentIdentity = identityForProfile(activeProfile);
+      const updated = await request(configuration.current, `/agents/${activeProfile.id}`, new AbortController().signal, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: currentIdentity.name,
+          role: currentIdentity.role,
+          portraitId: currentIdentity.portrait,
+          customPortrait: currentIdentity.customPortrait || null,
+          accent: currentIdentity.accent,
+          instructions: currentIdentity.instructions,
+          defaultModelId: activeProfile.defaultModelId,
+          defaultProviderId: activeProfile.defaultProviderId,
+          defaultHarnessMode: activeProfile.defaultHarnessMode,
+          enabledToolIds,
+          permissionPolicy,
+          expectedRevision: activeProfile.revision,
+        }),
+      }) as AgentProfile;
+      setProfiles(items => items.map(item => item.id === updated.id ? updated : item));
+      setConversation(current => current?.agent?.id === updated.id ? { ...current, agent: updated } : current);
+    } catch {
+      setProfileErrors(current => ({ ...current, [activeProfile.id]: 'Could not update MCP tool permissions.' }));
+    } finally {
+      profileMutation.current = false;
+      setProfileSavingId(null);
+    }
+  }
+
+  async function saveWorkspaceRootPath() {
+    if (!configuration.current || !conversation || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceRootPath: workspaceRootDraft.trim(),
+          expectedRevision: conversation.conversation.revision,
+        }),
+      }) as Conversation;
+      setConversation({ ...conversation, conversation: updated });
+      setHistory(items => items.map(item => item.id === updated.id ? updated : item));
+      setShowWorkspaceBar(false);
+    } catch {
+      setChatError('Could not update workspace root folder.');
+    } finally {
+      chatOperation.current = false; setChatBusy(false);
+    }
   }
 
   async function sendMessage() {
@@ -947,6 +1027,19 @@ export default function App() {
               <h2>{conversation?.conversation.title || 'A new conversation'}</h2>
               <span className="lane-label">Saved locally</span>
               <div className="chat-actions">
+                {conversation && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceRootDraft(conversation.conversation.workspaceRootPath ?? '');
+                      setShowWorkspaceBar(v => !v);
+                    }}
+                    aria-expanded={showWorkspaceBar}
+                    title={conversation.conversation.workspaceRootPath ? `Workspace: ${conversation.conversation.workspaceRootPath}` : 'Set authorized read-only workspace folder'}
+                  >
+                    <Icon name="folder" size={16} /><span>{conversation.conversation.workspaceRootPath ? 'Workspace' : 'Set folder'}</span>
+                  </button>
+                )}
                 <button
                   onClick={() => { setShowMember(false); if (!showPreview && window.innerWidth < 900) setSidebarCollapsed(true); setShowPreview(!showPreview); }}
                   aria-pressed={showPreview}
@@ -956,6 +1049,24 @@ export default function App() {
                 </button>
               </div>
             </div>
+            {conversation && showWorkspaceBar && (
+              <form
+                className="workspace-root-bar"
+                onSubmit={event => { event.preventDefault(); void saveWorkspaceRootPath(); }}
+              >
+                <label>
+                  <span>Read-only workspace folder</span>
+                  <input
+                    type="text"
+                    value={workspaceRootDraft}
+                    onChange={event => setWorkspaceRootDraft(event.target.value)}
+                    placeholder="e.g. G:\repos\guildhall"
+                  />
+                </label>
+                <button type="submit" disabled={chatBusy}>Save</button>
+                <button type="button" onClick={() => setShowWorkspaceBar(false)}>Cancel</button>
+              </form>
+            )}
             <ChatTranscript
               config={configuration.current}
               conversation={conversation}
@@ -965,6 +1076,7 @@ export default function App() {
               database={database}
               scrolling={scrolling}
               copiedMessageId={copiedMessageId}
+              toolActionBusy={chatBusy}
               onCopyMessage={(id, text) => void copyMessage(id, text)}
               onSelectStarter={suggestion => { setDraft(suggestion); composerInput.current?.focus(); }}
               onSaveToMemory={(text, trigger) => {
@@ -972,6 +1084,7 @@ export default function App() {
                 setMemorySaveError('');
                 setMemoryDraft({ text, scope: activeProfile ? 'Member' : 'AboutYou' });
               }}
+              onResolveToolDecision={(runId, eventId, approved) => void resolveToolDecision(runId, eventId, approved)}
             />
             <ChatComposer
               composerInput={composerInput}
@@ -1029,6 +1142,9 @@ export default function App() {
             onClose={() => setShowMember(false)}
             storageError={profileErrorForActive || storageError}
             saving={profileSaving}
+            enabledToolIds={activeProfile?.enabledToolIds ?? ['filesystem-mcp', 'git-mcp']}
+            permissionPolicy={activeProfile?.permissionPolicy ?? 'ask_unsafe'}
+            onUpdateToolPolicy={(enabledToolIds, permissionPolicy) => void updateMemberToolPolicy(enabledToolIds, permissionPolicy)}
             onRetrySave={() => {
               if (!activeProfile) return;
               const profileId = activeProfile.id;

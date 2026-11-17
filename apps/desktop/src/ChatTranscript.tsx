@@ -5,6 +5,7 @@ import { Portrait } from './CouncilMember';
 import type { MemberIdentity } from './CouncilMember';
 import { Icon } from './Icon';
 import { MessageAttachment } from './MessageAttachment';
+import { RunTraceList } from './RunTraceList';
 import { StreamingMarkdown } from './StreamingMarkdown';
 import { queuedPairs, starterSuggestions, waitingMessages } from './chatPresentation';
 import { splitThinking } from './thinking';
@@ -58,9 +59,11 @@ export interface ChatTranscriptProps {
     onKeyDown: (event: KeyboardEvent) => void;
   };
   copiedMessageId: string | null;
+  toolActionBusy?: boolean;
   onCopyMessage: (id: string, text: string) => void;
   onSelectStarter: (suggestion: string) => void;
   onSaveToMemory: (text: string, trigger: HTMLElement) => void;
+  onResolveToolDecision?: (runId: string, eventId: string, approved: boolean) => void;
 }
 
 export function ChatTranscript({
@@ -72,9 +75,11 @@ export function ChatTranscript({
   database,
   scrolling,
   copiedMessageId,
+  toolActionBusy = false,
   onCopyMessage,
   onSelectStarter,
   onSaveToMemory,
+  onResolveToolDecision,
 }: ChatTranscriptProps) {
   const queuedTurns = queuedPairs(conversation?.messages ?? []);
 
@@ -145,6 +150,14 @@ export function ChatTranscript({
                       <MessageAttachment key={file.id} attachment={file} config={config} />
                     ))}
                   </div>
+                )}
+                {message.role === 'assistant' && !!message.events?.length && (
+                  <RunTraceList
+                    runId={message.runId}
+                    events={message.events}
+                    busy={toolActionBusy}
+                    onResolveDecision={onResolveToolDecision}
+                  />
                 )}
               </div>
               {message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && (
