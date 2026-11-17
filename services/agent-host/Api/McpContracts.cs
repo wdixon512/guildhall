@@ -32,4 +32,20 @@ public sealed record CreateMcpServerRequest(
     string? Command,
     IReadOnlyList<string>? Arguments,
     string? EndpointUrl,
-    string SecurityTier = "Tier3");
+    string SecurityTier = "Tier3",
+    bool AllowPrivateTunnelHttp = false);
+
+public sealed record SetMcpTokenRequest(string Token);
+
+public sealed record CustomMcpServerView(
+    string Id,
+    string DisplayName,
+    string Transport,
+    string? EndpointUrl,
+    bool AllowPrivateTunnelHttp,
+    string SecurityTier,
+    bool IsEnabled,
+    bool HasToken,
+    long Revision,
+    int ToolCount = 0,
+    string HealthStatus = "Disconnected");

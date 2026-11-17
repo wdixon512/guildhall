@@ -17,6 +17,9 @@ public sealed class McpRegistry(
 
     private readonly ConcurrentDictionary<string, IReadOnlyList<McpToolDescriptor>> _externalToolsCache = new(StringComparer.OrdinalIgnoreCase);
 
+    public int GetCachedToolCount(string serverId) =>
+        _externalToolsCache.TryGetValue(serverId, out var tools) ? tools.Count : 0;
+
     public async Task<IReadOnlyList<McpServerInfo>> ListServersAsync(CancellationToken cancellationToken)
     {
         var servers = new List<McpServerInfo>();
@@ -59,6 +62,14 @@ public sealed class McpRegistry(
         foreach (var server in servers)
         {
             if (!enabledServerIds.Contains(server.ServerId)) continue;
+            if (!_builtIns.ContainsKey(server.ServerId) && !_externalToolsCache.ContainsKey(server.ServerId))
+            {
+                await ProbeServerAsync(server.ServerId, cancellationToken);
+                if (!healthSupervisor.CanAttempt(server.ServerId)) continue;
+                if (_externalToolsCache.TryGetValue(server.ServerId, out var discovered))
+                    tools.AddRange(discovered);
+                continue;
+            }
             if (!healthSupervisor.CanAttempt(server.ServerId)) continue;
             tools.AddRange(server.Tools);
         }

@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { HostRequestError, request } from './api';
 import type { Bootstrap, ConnectionEntry, ConnectionsCatalogData } from './api';
 import { openExternalLink } from './StreamingMarkdown';
+
+const PrivateInfrastructurePanel = lazy(() =>
+  import('./PrivateInfrastructurePanel').then(module => ({ default: module.PrivateInfrastructurePanel }))
+);
 import antigravityLogo from './assets/connections/antigravity.svg';
 import anthropicLogo from './assets/connections/anthropic.svg';
 import claudeLogo from './assets/connections/claude.svg';
@@ -195,6 +199,7 @@ export function ConnectionsCatalog({
       {notice && <p className="memory-status" role="status">{notice}</p>}
 
       {!catalog && loading && <p className="memory-status">Loading connections catalog…</p>}
+      {!catalog && !loading && <p className="memory-status">Connections catalog is not loaded yet. Click Probe all to load.</p>}
 
       {PILLAR_ORDER.map(pillar => {
         const group = entries.filter(entry => entry.pillar === pillar);
@@ -301,6 +306,12 @@ export function ConnectionsCatalog({
           </div>
         );
       })}
+
+      {entries.some(entry => entry.id === 'sql-server-mcp') && (
+        <Suspense fallback={<p className="memory-status">Loading private infrastructure…</p>}>
+          <PrivateInfrastructurePanel config={config} onSqlCatalogChanged={onProbeAll} />
+        </Suspense>
+      )}
     </section>
   );
 }

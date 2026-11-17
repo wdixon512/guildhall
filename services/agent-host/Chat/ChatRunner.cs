@@ -320,7 +320,7 @@ public sealed class ChatRunner(
                     : ex is BackingEngineException bee
                         ? bee.ErrorCode
                         : "provider_error";
-            logger.LogWarning("Chat run {RunId} failed with {Code}", runId, code);
+            logger.LogWarning(ex, "Chat run {RunId} failed with {Code}", runId, code);
             try { await FinishAsync(runId, answer, hostStopping.IsCancellationRequested ? ChatRunStatus.Interrupted : ChatRunStatus.Failed, code, engineKind, usage, elapsedMs); }
             catch { logger.LogWarning("Could not persist terminal state for chat run {RunId}", runId); }
         }

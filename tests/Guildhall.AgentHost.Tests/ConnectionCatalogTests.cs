@@ -95,7 +95,8 @@ public sealed class ConnectionCatalogTests
         Assert.False(github.IsPlanned);
 
         var sqlMcp = catalog.Entries.Single(x => x.Id == "sql-server-mcp");
-        Assert.Equal("Planned", sqlMcp.Status);
-        Assert.True(sqlMcp.IsPlanned);
+        Assert.Equal("Not connected", sqlMcp.Status);
+        Assert.True(sqlMcp.CanProbe);
+        Assert.False(sqlMcp.IsPlanned);
     }
 }
