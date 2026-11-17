@@ -1,7 +1,8 @@
 # Phase 3: Local MCP & External Service Integrations (Pillar 3)
 
-**Status:** In Progress  
+**Status:** Complete (`P3-00` through `P3-05` + live QC polish)  
 **Started:** November 16, 2026  
+**Completed:** November 17, 2026  
 **Baseline:** Phase 2 (`6dde037`) + `P3-00` (`App.tsx` modularization, `a08a029`)  
 **Migration:** `Phase3McpToolsAndTraces` (additive columns on `AgentDefinitions` and `Conversations`; new `ChatRunEvents` and `McpServerRegistrations` tables; DML-only `guildhall_runtime` grants)
 
@@ -34,8 +35,8 @@
 | ID | Task | Status |
 |---|---|---|
 | `P3-00` | Behavior-preserving `App.tsx` modularization (`CouncilSidebar`, `ChatTranscript`, `ChatComposer`, `WorkspaceSettingsPanel`, `ConfirmationDialogs`) | **Done** (`a08a029`) |
-| `P3-01` | Phase 3 docs, `Phase3McpToolsAndTraces` SQL migration + approval record, and `Security/` guardrails (`WorkspacePathGuard`, `ExfiltrationGuard`, `ToolPermissionGate`) | **In Progress** |
-| `P3-02` | MCP client runtime (`McpJsonRpcClient`), `McpHealthSupervisor` (Tier 5), `McpRegistry`, and built-in `filesystem-mcp` + `git-mcp` | Planned |
-| `P3-03` | Scoped external connectors (`github-mcp`, `google-drive-mcp`, `gmail-mcp`) + `ConnectionCatalogService` / `/mcp` endpoints | Planned |
-| `P3-04` | Pillar 1 native tool-calling + Pillar 2 dedicated per-CLI adapters + `ChatRunner` bounded tool loop & `PendingApproval` gate + `ContextBuilder` tool schema accounting | Planned |
-| `P3-05` | Frontend UI: `RunTraceList.tsx` (inline traces & Approve/Deny), `ConnectionsCatalog.tsx` Pillar 3 cards, `ContextInspector.tsx` Tier 5 health & schema tokens, `CouncilMember.tsx` tool/policy selectors, and session workspace root picker | Planned |
+| `P3-01` | Phase 3 docs, `Phase3McpToolsAndTraces` SQL migration + approval record, and `Security/` guardrails (`WorkspacePathGuard`, `ExfiltrationGuard`, `ToolPermissionGate`) | **Done** (`cd7031a`) |
+| `P3-02` | MCP client runtime (`McpJsonRpcClient`), `McpHealthSupervisor` (Tier 5), `McpRegistry`, and built-in `filesystem-mcp` + `git-mcp` | **Done** (`f03b657`) |
+| `P3-03` | Scoped external connectors (`github-mcp`, `google-drive-mcp`, `gmail-mcp`) + `ConnectionCatalogService` / `/mcp` endpoints | **Done** (`f03b657`) |
+| `P3-04` | Pillar 1 native tool-calling + Pillar 2 dedicated per-CLI adapters + `ChatRunner` bounded tool loop & `PendingApproval` gate + `ContextBuilder` tool schema accounting | **Done** (`6f8d570`) |
+| `P3-05` | Frontend UI: `RunTraceList.tsx` (inline traces & Approve/Deny), `ConnectionsCatalog.tsx` Pillar 3 cards, `ContextInspector.tsx` Tier 5 health & schema tokens, `CouncilMember.tsx` tool/policy selectors, and session workspace root picker | **Done** (`d485ae8`, QC polish `43df176`–`dc555ed`) |

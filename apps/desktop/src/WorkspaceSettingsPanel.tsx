@@ -78,14 +78,14 @@ export function WorkspaceSettingsPanel({
       <section className="settings-section">
         <div>
           <h3>Agent access</h3>
-          <small>Execution policy · planned for project tools</small>
+          <small>Workspace-wide override · planned (per-member policy is active)</small>
         </div>
-        <div className="planned-policy" aria-label="Planned agent access modes">
+        <div className="planned-policy" aria-label="Planned workspace agent access overrides">
           <button disabled>Always ask</button>
           <button disabled>Ask for unsafe actions</button>
           <button disabled>Unrestricted · danger</button>
         </div>
-        <small>These modes will be enforced by the local host when tool access is implemented.</small>
+        <small>Always ask and Ask for unsafe actions are active per Council Member in their profile drawer; workspace-wide overrides and Unrestricted mode are planned for Phase 4.</small>
       </section>
       <section className="settings-section">
         <div>
