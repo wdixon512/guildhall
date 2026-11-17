@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatAttachmentSize, formatResponseDuration, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
+import { formatAttachmentSize, formatWorkedDuration, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
+import { summarizeThinking } from './thinking';
 
 beforeEach(() => localStorage.clear());
 
@@ -15,12 +16,18 @@ describe('chat presentation helpers', () => {
     expect(formatAttachmentSize(Number.NaN)).toBe('0 KB');
   });
 
-  it('formats only finite non-negative response times', () => {
-    expect(formatResponseDuration(0.234)).toBe('Response time: 234 ms');
-    expect(formatResponseDuration(1.26)).toBe('Response time: 1.3 s');
-    expect(formatResponseDuration(null)).toBeNull();
-    expect(formatResponseDuration(-1)).toBeNull();
-    expect(formatResponseDuration(Number.NaN)).toBeNull();
+  it('formats only finite non-negative worked durations', () => {
+    expect(formatWorkedDuration(0.234)).toBe('Worked for 234ms');
+    expect(formatWorkedDuration(1.26)).toBe('Worked for 1.3s');
+    expect(formatWorkedDuration(10)).toBe('Worked for 10s');
+    expect(formatWorkedDuration(null)).toBeNull();
+    expect(formatWorkedDuration(-1)).toBeNull();
+    expect(formatWorkedDuration(Number.NaN)).toBeNull();
+  });
+
+  it('summarizes the latest active thinking line cleanly', () => {
+    expect(summarizeThinking('')).toBe('Thinking');
+    expect(summarizeThinking('**Checking options**\nReading `frontend-polish-plan.md`')).toBe('Reading frontend-polish-plan.md');
   });
 
   it('chooses deterministic starter prompts from member role and instructions', () => {

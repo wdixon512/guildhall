@@ -653,10 +653,43 @@ describe('connection status', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Open Formatting check' }));
     expect(await screen.findByText('this', { selector: 'strong' })).toBeInTheDocument();
     expect(screen.getByText('safe', { selector: 'code' })).toBeInTheDocument();
-    const responseTime = screen.getByText('Response time: 54 s');
-    expect(responseTime.nextElementSibling).toHaveClass('message-surface');
+    expect(screen.getByText('Worked for 54s')).toBeInTheDocument();
+    expect(screen.queryByText('Response time: 54 s')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Copy assistant response' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Use `safe` formatting.'));
+  });
+
+  it('summarizes live thinking and opens full thinking from the worked duration link', async () => {
+    HTMLDialogElement.prototype.showModal ??= function showModal() { this.setAttribute('open', ''); };
+    HTMLDialogElement.prototype.close ??= function close() { this.removeAttribute('open'); };
+    const chat = { id: 'think-chat', title: 'Thinking check', selectedModelId: 'qwen3:4b', revision: 1 };
+    let streaming = true;
+    vi.mocked(request).mockImplementation(async (_, path) => {
+      if (path === '/health') return { status: 'ok', apiVersion: 1 };
+      if (path === '/ready') return { status: 'ready' };
+      if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'qwen3:4b', displayName: 'qwen3:4b' }] };
+      if (path.startsWith('/conversations?')) return [chat];
+      if (path === '/conversations/think-chat') return {
+        conversation: chat,
+        messages: [
+          { id: 'u1', role: 'user', text: 'Check this', status: 'Completed', turnNumber: 1 },
+          streaming
+            ? { id: 'a1', role: 'assistant', text: '<think>Checking context\nReading frontend-polish-plan.md', status: 'Running', turnNumber: 1 }
+            : { id: 'a1', role: 'assistant', text: '<think>Checking context\nReading frontend-polish-plan.md</think>All set.', status: 'Completed', turnNumber: 1, responseDurationSeconds: 10 },
+        ],
+      };
+      throw new Error(`Unexpected API request: ${path}`);
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Thinking check' }));
+    const liveButton = await screen.findByRole('button', { name: /Reading frontend-polish-plan\.md/ });
+    expect(liveButton.querySelector('.waiting-dots')?.textContent).toBe('...');
+    streaming = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Open Thinking check' }));
+    const workedButton = await screen.findByRole('button', { name: /Worked for 10s/ });
+    fireEvent.click(workedButton);
+    const dialog = await screen.findByRole('dialog', { name: 'Model thinking' });
+    expect(dialog).toHaveTextContent('Reading frontend-polish-plan.md');
   });
   it('uploads a local text attachment with the message and exposes session tool placeholders', async () => {
     const chat = { id: 'file-chat', title: 'New conversation', selectedModelId: 'qwen3:1.7b', revision: 1 };

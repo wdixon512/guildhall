@@ -169,15 +169,16 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
             var options = new Dictionary<string, object> { ["num_thread"] = 4, ["num_ctx"] = budgetOptions.CurrentValue.MaxTurnContextTokens };
             if (!useGpu) options["num_gpu"] = 0;
             // Request-local settings: do not change the shared Ollama service or other clients.
-            // Avoid spending CPU on a hidden reasoning stream before the visible answer.
+            // Omit `think` so thinking-capable models emit `message.thinking` by default while non-thinking models remain compatible.
             var keepAliveSeconds = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
-            var payload = new { model = run.ModelId, stream = true, messages, options, think = false, keep_alive = keepAliveSeconds };
+            var payload = new { model = run.ModelId, stream = true, messages, options, keep_alive = keepAliveSeconds };
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat") { Content = JsonContent.Create(payload) };
             using var response = await clients.CreateClient("ollama-chat").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var reader = new StreamReader(stream);
             var completed = false;
+            var inThinking = false;
             var lastCheckpoint = DateTime.UtcNow;
             var checkpointLength = 0;
             while (await reader.ReadLineAsync(cancellationToken) is { } line)
@@ -185,7 +186,19 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
                 if (line.Length > 256 * 1024) throw new InvalidOperationException("provider_record_too_large");
                 using var json = JsonDocument.Parse(line);
                 if (json.RootElement.TryGetProperty("error", out _)) throw new InvalidOperationException("provider_error");
-                if (json.RootElement.TryGetProperty("message", out var message) && message.TryGetProperty("content", out var content)) answer += content.GetString();
+                if (json.RootElement.TryGetProperty("message", out var message))
+                {
+                    if (message.TryGetProperty("thinking", out var thinkingProp) && thinkingProp.GetString() is { Length: > 0 } thinkingChunk)
+                    {
+                        if (!inThinking) { answer += "<think>"; inThinking = true; }
+                        answer += thinkingChunk;
+                    }
+                    if (message.TryGetProperty("content", out var contentProp) && contentProp.GetString() is { Length: > 0 } contentChunk)
+                    {
+                        if (inThinking) { answer += "</think>"; inThinking = false; }
+                        answer += contentChunk;
+                    }
+                }
                 if (answer.Length > 131072) throw new InvalidOperationException("output_limit");
                 if (answer.Length - checkpointLength >= 1024 || (answer.Length > checkpointLength && DateTime.UtcNow - lastCheckpoint >= TimeSpan.FromMilliseconds(400)))
                 {
@@ -195,6 +208,7 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
                 }
                 if (json.RootElement.TryGetProperty("done", out var done) && done.GetBoolean()) { completed = true; break; }
             }
+            if (inThinking) answer += "</think>";
             if (!completed) throw new InvalidOperationException("invalid_provider_response");
             await FinishAsync(runId, answer, ChatRunStatus.Completed, null);
         }

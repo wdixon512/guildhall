@@ -6,10 +6,11 @@ export function formatAttachmentSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function formatResponseDuration(seconds?: number | null): string | null {
+export function formatWorkedDuration(seconds?: number | null): string | null {
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
-  if (seconds < 1) return `Response time: ${Math.round(seconds * 1000)} ms`;
-  return `Response time: ${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+  if (seconds < 1) return `Worked for ${Math.round(seconds * 1000)}ms`;
+  const formatted = seconds < 10 ? seconds.toFixed(1).replace(/\.0$/, '') : String(Math.round(seconds));
+  return `Worked for ${formatted}s`;
 }
 
 export function starterSuggestions(profile?: Pick<AgentProfile, 'role' | 'instructions'>): string[] {

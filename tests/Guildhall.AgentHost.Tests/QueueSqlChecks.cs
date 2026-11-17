@@ -72,7 +72,7 @@ internal static class QueueSqlChecks
             Assert.Equal(1, behaviorSnapshot.RootElement.GetProperty("guildhallBehaviorRevision").GetInt64());
             Assert.Contains("capable member of the Guildhall council", behaviorSnapshot.RootElement.GetProperty("guildhallBehavior").GetString());
         }
-        Assert.Equal("A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
+        Assert.Equal("<think>Private fixture reasoning</think>A completed reply.", (await verify.ChatMessages.SingleAsync(x => x.RunId == urgent.RunId && x.Role == ChatMessageRole.Assistant)).Text);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == first.RunId)).Status);
         Assert.Equal(ChatRunStatus.Cancelled, (await verify.ChatRuns.SingleAsync(x => x.Id == removed.RunId)).Status);
         Assert.Equal(ChatRunStatus.Completed, (await verify.ChatRuns.SingleAsync(x => x.Id == urgent.RunId)).Status);
@@ -151,7 +151,7 @@ internal static class QueueSqlChecks
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
-            Assert.False(json.RootElement.GetProperty("think").GetBoolean());
+            Assert.False(json.RootElement.TryGetProperty("think", out _));
             Assert.Equal(Math.Clamp(keepAliveSeconds, 0, 900), json.RootElement.GetProperty("keep_alive").GetInt32());
             var messages = json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
             Assert.Equal("system", messages[0].GetProperty("role").GetString());
