@@ -32,7 +32,7 @@ This repository manages two distinct layers of agents:
 To keep token spend low and prevent context pollution, every coding agent must follow this strict loading order:
 
 1. **Step 1 — Root Router (`AGENTS.md`):** Read [AGENTS.md](../AGENTS.md) (and [docs/coding-standards.md](../docs/coding-standards.md) when writing C#, EF Core, TypeScript, or Tauri code).
-2. **Step 2 — Scoped Master Plan & Active Phase Folder:** Read only the relevant section of [personal_ai_ecosystem_master_plan.md](../docs/masterplan/personal_ai_ecosystem_master_plan.md) and the specific document in `docs/masterplan/phase N/` for the current task (e.g., `docs/masterplan/phase 1/phase-1.md`).
+2. **Step 2 — Scoped Master Plan & Active Phase Folder:** Read only the relevant section of [personal_ai_ecosystem_master_plan.md](../docs/masterplan/personal_ai_ecosystem_master_plan.md) and the specific document in `docs/masterplan/phase N/` for the current task (e.g., `docs/masterplan/phase 6/phase-6.md`).
 3. **Step 3 — Task Declaration Before Editing:** State the allowed files, acceptance criteria, and verification commands before modifying source files. Use broad codebase search only when targeted documentation does not answer the question.
 
 ---
@@ -55,7 +55,7 @@ To keep token spend low and prevent context pollution, every coding agent must f
 
 ## 5. Layer B — On-Disk Layout for In-App Council Preambles (`services/agent-host/Preambles/`)
 
-When implementing and maintaining Guildhall's disk-backed Council Member preambles (Task B04/B06):
+When implementing and maintaining Guildhall's disk-backed Council Member preambles:
 
 ```text
 services/agent-host/
@@ -63,10 +63,10 @@ services/agent-host/
     global-guidelines.md          # System-wide operational boundaries (relies strictly on tool outputs,
                                   # respects workspace scope, never fabricates states or benchmark metrics)
     members/
-      maren.md                    # YAML frontmatter (tunable persona/role, reasoning effort, default model)
-      architect.md                # + Markdown body (primary task objectives and role instructions)
-      builder.md
-      reviewer.md
+      artisan.md                  # YAML frontmatter (tunable persona/role, reasoning effort, default model)
+      maren.md                    # + Markdown body (primary task objectives and role instructions)
+      researcher.md
+      scholar.md
 ```
 
 - **Static System Preamble Assembly:** `Guildhall.AgentHost` combines `global-guidelines.md` + the active member's `members/<slug>.md` into a single static `system` message per API call.

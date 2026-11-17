@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { HostRequestError, pickWorkspaceFolder, request, type Bootstrap, type MessageView, type RegisteredProject, type WorkspaceAccessPolicy, type WorktreeSettings } from './api';
+import { Icon } from './Icon';
 
 const POLICY_LABELS: Record<string, string> = {
   always_ask: 'Always ask',
@@ -164,7 +165,7 @@ export function WorkspaceSettingsPanel({
           <h2>Workspace settings</h2>
           <small>Preferences are stored on this computer.</small>
         </div>
-        <button aria-label="Close workspace settings" onClick={onClose}>×</button>
+        <button type="button" className="icon-button" aria-label="Close workspace settings" title="Close workspace settings" onClick={onClose}><Icon name="close" size={18} /></button>
       </div>
       <Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading behavior settings…</small></section>}>
         <GuildhallBehaviorSettings config={config} />

@@ -107,7 +107,7 @@ Guildhall enforces lazy loading across all three application layers (**EF Core 1
 ### 3.3 Layer 3 — React 19 & Asset Lazy Loading
 - **Component Code-Splitting (`React.lazy` + `<Suspense>`):**
   - Keep the primary chat shell (`App`, `StreamingMarkdown`, `AssistantResponse`) in the initial bundle so first paint is immediate.
-  - Lazy-load secondary overlays and management panels (`GuildhallBehaviorSettings`, future `RunInspector`, `ContextInspector`, and `ConnectionsCatalog`) using `React.lazy(() => import(...))` wrapped in `<Suspense>`.
+  - Lazy-load secondary overlays and management panels (`GuildhallBehaviorSettings`, `ContextInspector`, `ConnectionsCatalog`, `ScheduledTasksPanel`, and future `RunInspector`) using `React.lazy(() => import(...))` wrapped in `<Suspense>`.
 - **On-Demand Media & Expression Sheets:**
   - Keep neutral council portraits on the shared base WebP sheet; load character expression sheets (`pondering`, `idea`, `reading`, `surprised`, `laughing`) and attachment blob URLs (`URL.createObjectURL`) strictly on demand when displayed, and always revoke object URLs on unmount.
 

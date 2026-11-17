@@ -402,6 +402,72 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.ToTable("Conversations", (string)null);
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.DurableTaskRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentDefinitionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("ChatRunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<DateTime?>("FinishedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ScheduledAutomationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ScheduledForUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("StartedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Queued");
+
+                    b.Property<string>("SummaryText")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("TriggerKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Scheduled");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatRunId");
+
+                    b.HasIndex("ScheduledAutomationId", "CreatedUtc");
+
+                    b.HasIndex("Status", "ScheduledForUtc");
+
+                    b.ToTable("DurableTaskRuns", (string)null);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.GuildhallBehaviorSettings", b =>
                 {
                     b.Property<int>("Id")
@@ -636,6 +702,98 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.ToTable("RegisteredProjects", (string)null);
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ScheduledAutomation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AgentDefinitionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CronExpression")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<bool>("IsPaused")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("LastEvaluatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("LastRunUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("MaxBudgetTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int>("MaxCatchUpRuns")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(3);
+
+                    b.Property<int>("MaxDurationSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(300);
+
+                    b.Property<string>("MisfirePolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("RunOnce");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime?>("NextRunUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TimezoneId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasDefaultValue("UTC");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgentDefinitionId");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("IsPaused", "NextRunUtc");
+
+                    b.ToTable("ScheduledAutomations", (string)null);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.SqlMcpProfile", b =>
                 {
                     b.Property<Guid>("Id")
@@ -819,6 +977,21 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Navigation("AgentDefinition");
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.DurableTaskRun", b =>
+                {
+                    b.HasOne("Guildhall.AgentHost.Persistence.ChatRun", null)
+                        .WithMany()
+                        .HasForeignKey("ChatRunId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Guildhall.AgentHost.Persistence.ScheduledAutomation", "ScheduledAutomation")
+                        .WithMany("Runs")
+                        .HasForeignKey("ScheduledAutomationId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("ScheduledAutomation");
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.MemoryNote", b =>
                 {
                     b.HasOne("Guildhall.AgentHost.Persistence.AgentDefinition", "AgentDefinition")
@@ -847,6 +1020,20 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Navigation("Project");
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ScheduledAutomation", b =>
+                {
+                    b.HasOne("Guildhall.AgentHost.Persistence.AgentDefinition", null)
+                        .WithMany()
+                        .HasForeignKey("AgentDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Guildhall.AgentHost.Persistence.RegisteredProject", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.SetNull);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatMessage", b =>
                 {
                     b.Navigation("Attachments");
@@ -867,6 +1054,11 @@ namespace Guildhall.AgentHost.Persistence.Migrations
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.RegisteredProject", b =>
                 {
                     b.Navigation("Worktrees");
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ScheduledAutomation", b =>
+                {
+                    b.Navigation("Runs");
                 });
 #pragma warning restore 612, 618
         }

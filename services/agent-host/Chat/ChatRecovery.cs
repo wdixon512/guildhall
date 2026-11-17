@@ -3,12 +3,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Guildhall.AgentHost.Chat;
 
-public static class ChatRecovery
+public sealed class ChatRecoveryService(
+    IDbContextFactory<GuildhallDbContext> factory,
+    TimeProvider timeProvider)
 {
-    public static async Task ReconcileAsync(IDbContextFactory<GuildhallDbContext> factory, DateTime hostStartedUtc, CancellationToken ct)
+    public async Task ReconcileAsync(DateTime hostStartedUtc, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        var now = DateTime.UtcNow;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
         await db.ChatRuns.Where(x => x.StartedUtc < hostStartedUtc && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued))
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, ChatRunStatus.Interrupted)
                 .SetProperty(x => x.ErrorCode, "host_restarted").SetProperty(x => x.Sequence, x => x.Sequence + 1)

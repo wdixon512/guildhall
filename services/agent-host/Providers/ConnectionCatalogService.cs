@@ -28,6 +28,25 @@ public sealed class ConnectionCatalogService(
         public const string Planned = "Planned";
     }
 
+    public async Task<string?> ResolveDefaultModelIdAsync(string? providerId, CancellationToken ct)
+    {
+        var effectiveProvider = string.IsNullOrWhiteSpace(providerId) ? "ollama" : providerId.Trim();
+
+        var cli = CliHarnessDescriptors.Find(effectiveProvider);
+        if (cli is not null)
+            return cli.DefaultModelId;
+
+        if (string.Equals(effectiveProvider, "ollama", StringComparison.OrdinalIgnoreCase))
+        {
+            var discovery = await ollamaDiscovery.DiscoverAsync(ct);
+            return discovery.Models.FirstOrDefault(m => m.Id == "qwen3:4b")?.Id
+                ?? discovery.Models.FirstOrDefault(m => m.Id == "qwen3:1.7b")?.Id
+                ?? discovery.Models.FirstOrDefault()?.Id;
+        }
+
+        return CloudModelCatalog.GetModels(effectiveProvider).FirstOrDefault()?.Id;
+    }
+
     public async Task<ConnectionsCatalogResponse> GetCatalogAsync(bool runLiveProbes, CancellationToken ct)
     {
         var entries = new List<ConnectionEntryResponse>

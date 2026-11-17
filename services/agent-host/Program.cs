@@ -1,5 +1,6 @@
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Configuration;
+using Guildhall.AgentHost.Health;
 using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Mcp.Providers;
 using Guildhall.AgentHost.Persistence;
@@ -8,6 +9,7 @@ using Guildhall.AgentHost.Providers.Cli;
 using Guildhall.AgentHost.Providers.Cloud;
 using Guildhall.AgentHost.Providers.Ollama;
 using Guildhall.AgentHost.Chat;
+using Guildhall.AgentHost.Scheduling;
 using Guildhall.AgentHost.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http.Features;
@@ -43,19 +45,22 @@ builder.Services.AddDbContextFactory<GuildhallDbContext>((services, options) =>
     options.UseSqlServer(LocalConfiguration.RuntimeConnection(services.GetRequiredService<IConfiguration>().GetConnectionString("Guildhall")), sql => sql.CommandTimeout(10)));
 builder.Services.AddSingleton<IDatabaseReadiness>(services => new DatabaseReadiness(LocalConfiguration.RuntimeConnection(
     services.GetRequiredService<IConfiguration>().GetConnectionString("Guildhall"))));
-builder.Services.AddHttpClient<OllamaDiscovery>((services, http) => {
+static IHttpClientBuilder ConfigureHardenedHandler(IHttpClientBuilder httpBuilder) =>
+    httpBuilder.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+
+ConfigureHardenedHandler(builder.Services.AddHttpClient<OllamaDiscovery>((services, http) =>
+{
     http.BaseAddress = LocalConfiguration.LoopbackUri(services.GetRequiredService<IConfiguration>()["GUILDHALL_OLLAMA_URL"] ?? "http://127.0.0.1:11434");
     http.Timeout = Timeout.InfiniteTimeSpan;
-})
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("ollama-chat", (services, http) => { http.BaseAddress = LocalConfiguration.LoopbackUri(services.GetRequiredService<IConfiguration>()["GUILDHALL_OLLAMA_URL"] ?? "http://127.0.0.1:11434"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("openai-api", http => { http.BaseAddress = new Uri("https://api.openai.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("gemini-api", http => { http.BaseAddress = new Uri("https://generativelanguage.googleapis.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("anthropic-api", http => { http.BaseAddress = new Uri("https://api.anthropic.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("mcp-http", http => { http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("github-api", http => { http.BaseAddress = new Uri("https://api.github.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("google-drive-api", http => { http.BaseAddress = new Uri("https://www.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-builder.Services.AddHttpClient("gmail-api", http => { http.BaseAddress = new Uri("https://gmail.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+}));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("ollama-chat", (services, http) => { http.BaseAddress = LocalConfiguration.LoopbackUri(services.GetRequiredService<IConfiguration>()["GUILDHALL_OLLAMA_URL"] ?? "http://127.0.0.1:11434"); http.Timeout = TimeSpan.FromMinutes(5); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("openai-api", http => { http.BaseAddress = new Uri("https://api.openai.com"); http.Timeout = TimeSpan.FromMinutes(5); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("gemini-api", http => { http.BaseAddress = new Uri("https://generativelanguage.googleapis.com"); http.Timeout = TimeSpan.FromMinutes(5); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("anthropic-api", http => { http.BaseAddress = new Uri("https://api.anthropic.com"); http.Timeout = TimeSpan.FromMinutes(5); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("mcp-http", http => { http.Timeout = TimeSpan.FromSeconds(15); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("github-api", http => { http.BaseAddress = new Uri("https://api.github.com"); http.Timeout = TimeSpan.FromSeconds(15); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("google-drive-api", http => { http.BaseAddress = new Uri("https://www.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }));
+ConfigureHardenedHandler(builder.Services.AddHttpClient("gmail-api", http => { http.BaseAddress = new Uri("https://gmail.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }));
 builder.Services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
 builder.Services.AddSingleton<EnvironmentScrubber>();
 builder.Services.AddSingleton<WorkspacePathGuard>();
@@ -88,8 +93,13 @@ builder.Services.AddSingleton<IBackingEngine, CursorCliEngine>();
 builder.Services.AddSingleton<IBackingEngine, GeminiCliEngine>();
 builder.Services.AddSingleton<IBackingEngineRegistry, BackingEngineRegistry>();
 builder.Services.AddSingleton<ConnectionCatalogService>();
+builder.Services.AddSingleton<ChatRecoveryService>();
 builder.Services.AddSingleton<ChatRunner>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ChatRunner>());
+builder.Services.AddSingleton<DurableTaskSchedulerService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<DurableTaskSchedulerService>());
+builder.Services.AddSingleton<FiveTierHealthSupervisor>();
+builder.Services.AddHostedService(services => services.GetRequiredService<FiveTierHealthSupervisor>());
 var app = builder.Build();
 var token = app.Configuration["GUILDHALL_SESSION_TOKEN"];
 if (string.IsNullOrWhiteSpace(token) || token.Length < 32 || token.Length > 128 || token.Any(char.IsWhiteSpace))
@@ -112,6 +122,8 @@ app.MapMcpEndpoints();
 app.MapSqlMcpEndpoints();
 app.MapMcpGatewayEndpoints();
 app.MapProjectEndpoints();
+app.MapHealthEndpoints();
+app.MapScheduleEndpoints();
 app.MapChat();
 app.Run();
 

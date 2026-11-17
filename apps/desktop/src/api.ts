@@ -38,9 +38,22 @@ export async function request(config: Bootstrap, path: string, signal: AbortSign
   if (response.status === 204) return null;
   return response.json();
 }
+export async function requestJson<T>(
+  config: Bootstrap,
+  path: string,
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  signal: AbortSignal,
+  body?: unknown,
+): Promise<T> {
+  return request(config, path, signal, {
+    method,
+    ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+  }) as Promise<T>;
+}
+
 export async function requestBlob(config: Bootstrap, path: string, signal: AbortSignal): Promise<Blob> {
   const response = await fetch(new URL(path, config.hostUrl), { headers: { Authorization: `Bearer ${config.token}` }, signal, redirect: 'error', cache: 'no-store' });
-  if (!response.ok) throw new Error('Host request failed');
+  if (!response.ok) throw new HostRequestError(undefined, `Host request failed (${response.status})`);
   return response.blob();
 }
 
@@ -74,6 +87,10 @@ export type CustomMcpServerView = { id: string; displayName: string; transport: 
 export type TunnelInterfaceInfo = { name: string; kind: string; status: string; addresses: string[] };
 export type PortExposureCheck = { port: number; serviceName: string; posture: string; listeningAddresses: string[]; summary: string };
 export type PrivateNetworkStatus = { wireGuardDetected: boolean; tailscaleDetected: boolean; tunnelInterfaces: TunnelInterfaceInfo[]; portChecks: PortExposureCheck[]; checkedUtc: string };
+export type HealthTierStatus = { tierId: string; displayName: string; status: string; summary: string; consecutiveFailures: number; lastCheckedUtc?: string | null; nextRetryUtc?: string | null; canRecover: boolean };
+export type FiveTierHealthSnapshot = { checkedUtc: string; overallStatus: string; tiers: HealthTierStatus[]; vram?: VramResidency | null };
+export type ScheduledAutomationView = { id: string; name: string; agentDefinitionId: string; agentName: string; projectId?: string | null; conversationId?: string | null; prompt: string; cronExpression: string; timezoneId: string; misfirePolicy: 'Skip' | 'RunOnce' | 'CatchUpBounded'; maxCatchUpRuns: number; maxBudgetTokens?: number | null; maxDurationSeconds: number; isPaused: boolean; lastRunUtc?: string | null; nextRunUtc?: string | null; createdUtc: string; updatedUtc: string; revision: number; lastRunStatus?: string | null };
+export type DurableTaskRunView = { id: string; scheduledAutomationId?: string | null; agentDefinitionId: string; chatRunId?: string | null; conversationId?: string | null; triggerKind: string; scheduledForUtc: string; status: string; attemptCount: number; errorCode?: string | null; summaryText?: string | null; createdUtc: string; startedUtc?: string | null; finishedUtc?: string | null; inputTokens?: number | null; outputTokens?: number | null; durationMs?: number | null };
 
 export async function pickWorkspaceFolder(): Promise<string | null> {
   return invoke<string | null>('pick_workspace_folder');

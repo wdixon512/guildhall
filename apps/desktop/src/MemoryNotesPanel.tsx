@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { request } from './api';
 import type { Bootstrap, MemoryNote, MemoryNoteScope } from './api';
+import { Icon } from './Icon';
 import { TextEditorModal } from './TextEditorModal';
 
 export function MemoryNotesPanel({
@@ -172,7 +173,9 @@ export function MemoryNotesPanel({
         <div className="memory-add-footer">
           <small>{draft.trim().length}/2000</small>
           <div className="memory-add-buttons">
-            <button type="button" onClick={() => setExpandDraft(true)} disabled={!canLoad || creating}>Expand</button>
+            <button type="button" className="icon-action-button" aria-label="Expand draft" title="Expand draft" onClick={() => setExpandDraft(true)} disabled={!canLoad || creating}>
+              <Icon name="expand" size={14} />
+            </button>
             <button type="button" onClick={() => void addNote()} disabled={!canLoad || creating || !draft.trim() || draft.trim().length > 2000}>
               {creating ? 'Saving…' : 'Add note'}
             </button>
@@ -200,14 +203,21 @@ export function MemoryNotesPanel({
               {note.sourceConversationId && <span className="memory-source">From session</span>}
             </div>
             <div className="memory-item-actions">
-              <button type="button" onClick={() => void toggleEnabled(note)} disabled={!!busyId}>
-                {note.isEnabled ? 'Disable' : 'Enable'}
+              <button
+                type="button"
+                className="icon-action-button"
+                aria-label={note.isEnabled ? 'Disable' : 'Enable'}
+                title={note.isEnabled ? 'Disable note' : 'Enable note'}
+                onClick={() => void toggleEnabled(note)}
+                disabled={!!busyId}
+              >
+                <Icon name={note.isEnabled ? 'eye' : 'eyeOff'} size={14} />
               </button>
-              <button type="button" onClick={() => { setModalError(''); setEditingNote(note); }} disabled={!!busyId}>
-                Edit
+              <button type="button" className="icon-action-button" aria-label={`Edit note: ${note.body.slice(0, 40)}`} title="Edit note" onClick={() => { setModalError(''); setEditingNote(note); }} disabled={!!busyId}>
+                <Icon name="edit" size={14} />
               </button>
-              <button type="button" className="memory-forget" onClick={() => void forgetNote(note)} disabled={!!busyId}>
-                Forget
+              <button type="button" className="icon-action-button memory-forget" aria-label={`Forget note: ${note.body.slice(0, 40)}`} title="Forget note" onClick={() => void forgetNote(note)} disabled={!!busyId}>
+                <Icon name="trash" size={14} />
               </button>
             </div>
           </li>

@@ -167,17 +167,17 @@ public sealed class ProjectWorkspaceService(
 
         RegisteredProject? project = null;
         if (conversation.ProjectId is { } pid)
-            project = await db.RegisteredProjects.FirstOrDefaultAsync(x => x.Id == pid, ct);
+            project = await db.RegisteredProjects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == pid, ct);
         else if (!string.IsNullOrWhiteSpace(conversation.WorkspaceRootPath))
         {
             var normalized = Path.GetFullPath(conversation.WorkspaceRootPath.Trim())
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            project = await db.RegisteredProjects.FirstOrDefaultAsync(x => x.RootPath == normalized, ct);
+            project = await db.RegisteredProjects.AsNoTracking().FirstOrDefaultAsync(x => x.RootPath == normalized, ct);
             if (project is null && Directory.Exists(normalized))
             {
                 var (reg, errCode, errMsg) = await RegisterProjectAsync(new RegisterProjectRequest(normalized), ct);
                 if (reg is null) return (null, errCode, errMsg);
-                project = await db.RegisteredProjects.FirstOrDefaultAsync(x => x.Id == reg.Id, ct);
+                project = await db.RegisteredProjects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == reg.Id, ct);
             }
         }
 
@@ -333,7 +333,7 @@ public sealed class ProjectWorkspaceService(
         if (worktree is null)
             return (null, "worktree_not_found", "Active worktree record not found.");
 
-        var project = await db.RegisteredProjects.FirstOrDefaultAsync(x => x.Id == worktree.ProjectId, ct);
+        var project = await db.RegisteredProjects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == worktree.ProjectId, ct);
         if (project is null)
             return (null, "project_not_found", "Registered project not found.");
 
@@ -390,7 +390,7 @@ public sealed class ProjectWorkspaceService(
         if (worktree is null)
             return (false, "worktree_not_found", "Active worktree record not found.");
 
-        var project = await db.RegisteredProjects.FirstOrDefaultAsync(x => x.Id == worktree.ProjectId, ct);
+        var project = await db.RegisteredProjects.AsNoTracking().FirstOrDefaultAsync(x => x.Id == worktree.ProjectId, ct);
         var gitPath = processRunner.ResolveExecutable("git");
         if (gitPath is not null && project is not null)
             await CleanupWorktreeOnDiskAsync(gitPath, project.RootPath, worktree, ct);
