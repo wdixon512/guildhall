@@ -1,36 +1,28 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { bootstrap, HostRequestError, parseDiscovery, parseReadiness, request, requestBlob } from './api';
 import type { AgentProfile, Bootstrap, ConnectionsCatalogData, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
-import { MessageAttachment } from './MessageAttachment';
-import { StreamingMarkdown } from './StreamingMarkdown';
-import { AssistantResponse } from './AssistantResponse';
-import { splitThinking } from './thinking';
+import { ChatComposer } from './ChatComposer';
+import { ChatTranscript } from './ChatTranscript';
+import { ConfirmationDialogs } from './ConfirmationDialogs';
+import type { MemoryDraft } from './ConfirmationDialogs';
+import { CouncilMember, Portrait, useMemberIdentity } from './CouncilMember';
+import type { MemberIdentity } from './CouncilMember';
+import { CouncilSidebar } from './CouncilSidebar';
+import { Icon } from './Icon';
+import { PaneResizeHandle } from './PaneResizeHandle';
+import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
+import { markConversationRead, readWatermarks } from './chatPresentation';
+import { usePanelPresence } from './usePanelPresence';
+import { useTranscriptScroll } from './useTranscriptScroll';
+import './style.css';
 
-const GuildhallBehaviorSettings = lazy(() =>
-  import('./GuildhallBehaviorSettings').then(module => ({ default: module.GuildhallBehaviorSettings }))
-);
-const MemoryNotesPanel = lazy(() =>
-  import('./MemoryNotesPanel').then(module => ({ default: module.MemoryNotesPanel }))
-);
 const ContextInspector = lazy(() =>
   import('./ContextInspector').then(module => ({ default: module.ContextInspector }))
 );
 const ConnectionsCatalog = lazy(() =>
   import('./ConnectionsCatalog').then(module => ({ default: module.ConnectionsCatalog }))
 );
-
-import { Icon } from './Icon';
-import { DropUpSelect } from './DropUpSelect';
-import type { DropUpOption } from './DropUpSelect';
-import { PaneResizeHandle } from './PaneResizeHandle';
-import { usePanelPresence } from './usePanelPresence';
-import { useTranscriptScroll } from './useTranscriptScroll';
-import { CouncilMember, Portrait, useMemberIdentity } from './CouncilMember';
-import type { MemberIdentity } from './CouncilMember';
-import { formatAttachmentSize, groupModelsByEffort, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
-import type { CSSProperties } from 'react';
-import './style.css';
 
 const sessionTabs = [
   { id: 'git', label: 'Git changes', status: 'No project' },
@@ -41,9 +33,32 @@ const sessionTabs = [
   { id: 'side-chat', label: 'Side chat', status: 'Planned' },
   { id: 'automations', label: 'Scheduled tasks', status: 'Disabled' },
 ] as const;
-const toMemberIdentity = (profile: AgentProfile): MemberIdentity => ({ name: profile.name, role: profile.role, portrait: profile.portraitId, customPortrait: profile.customPortrait ?? '', accent: profile.accent, instructions: profile.instructions });
-const profileMatchesIdentity = (profile: AgentProfile, identity: MemberIdentity) => identity.name === profile.name && identity.role === profile.role && identity.portrait === profile.portraitId && identity.customPortrait === (profile.customPortrait ?? '') && identity.accent === profile.accent && identity.instructions === profile.instructions;
-const sameIdentity = (left: MemberIdentity, right: MemberIdentity) => left.name === right.name && left.role === right.role && left.portrait === right.portrait && left.customPortrait === right.customPortrait && left.accent === right.accent && left.instructions === right.instructions;
+
+const toMemberIdentity = (profile: AgentProfile): MemberIdentity => ({
+  name: profile.name,
+  role: profile.role,
+  portrait: profile.portraitId,
+  customPortrait: profile.customPortrait ?? '',
+  accent: profile.accent,
+  instructions: profile.instructions,
+});
+
+const profileMatchesIdentity = (profile: AgentProfile, identity: MemberIdentity) =>
+  identity.name === profile.name &&
+  identity.role === profile.role &&
+  identity.portrait === profile.portraitId &&
+  identity.customPortrait === (profile.customPortrait ?? '') &&
+  identity.accent === profile.accent &&
+  identity.instructions === profile.instructions;
+
+const sameIdentity = (left: MemberIdentity, right: MemberIdentity) =>
+  left.name === right.name &&
+  left.role === right.role &&
+  left.portrait === right.portrait &&
+  left.customPortrait === right.customPortrait &&
+  left.accent === right.accent &&
+  left.instructions === right.instructions;
+
 function storedPaneWidth(key: string, fallback: number, min: number, max: number) {
   try {
     const saved = Number(localStorage.getItem(key));
@@ -51,22 +66,12 @@ function storedPaneWidth(key: string, fallback: number, min: number, max: number
   } catch { return fallback; }
 }
 
-function AttachmentThumbnail({ file }: { file: File }) {
-  const [url, setUrl] = useState('');
-  useEffect(() => {
-    if (!/^image\/(png|jpeg|gif|webp)$/i.test(file.type) || !URL.createObjectURL) return;
-    const preview = URL.createObjectURL(file);
-    setUrl(preview);
-    return () => URL.revokeObjectURL(preview);
-  }, [file]);
-  return url ? <img className="pending-image" src={url} alt={`Preview of ${file.name}`} /> : null;
-}
-
 export default function App() {
   const { identity, setIdentity, storageError } = useMemberIdentity(false);
   const [showMember, setShowMember] = useState(() => window.innerWidth >= 1280);
   const [conversationMenu, setConversationMenu] = useState<string | null>(null);
   const memberName = identity.name.trim() || 'Maren';
+
   useEffect(() => {
     const dismiss = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !document.querySelector('[data-member-menu], [aria-labelledby="archive-member-title"], [aria-labelledby="delete-member-title"]')) {
@@ -77,6 +82,7 @@ export default function App() {
     window.addEventListener('keydown', dismiss);
     return () => window.removeEventListener('keydown', dismiss);
   }, []);
+
   const [uiScale, setUiScale] = useState(() => {
     try { const saved = Number(localStorage.getItem('guildhall.uiScale')); return Number.isFinite(saved) && saved >= 0.8 && saved <= 1.5 ? saved : 1; }
     catch { return 1; }
@@ -100,7 +106,6 @@ export default function App() {
   const hasPendingWork = running || queuedCount > 0;
   const [deliveryMode, setDeliveryMode] = useState<'queue' | 'send_now'>('queue');
   const scrolling = useTranscriptScroll(conversation?.conversation.id ?? null, conversation?.messages);
-  const transcript = scrolling.transcript;
   const draftsByKey = useRef<Map<string, { draft: string; selectedFiles: File[]; editingQueuedRunId: string | null }>>((() => {
     const map = new Map<string, { draft: string; selectedFiles: File[]; editingQueuedRunId: string | null }>();
     try {
@@ -118,13 +123,7 @@ export default function App() {
   const [editingQueuedRunId, setEditingQueuedRunId] = useState<string | null>(null);
   const [collapsedMembers, setCollapsedMembers] = useState<Record<string, boolean>>({});
   const [instanceTag, setInstanceTag] = useState('');
-  const filePicker = useRef<HTMLInputElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement | null>(null);
-  useLayoutEffect(() => {
-    if (!composerInput.current) return;
-    composerInput.current.style.height = 'auto';
-    composerInput.current.style.height = `${Math.min(160, Math.max(30, composerInput.current.scrollHeight))}px`;
-  }, [draft]);
   const hasDraft = !!draft.trim() || selectedFiles.length > 0 || editingQueuedRunId !== null;
   const [chatError, setChatError] = useState('');
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -143,14 +142,9 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
-  const [memberMenuPosition, setMemberMenuPosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const [archiveMemberTarget, setArchiveMemberTarget] = useState<AgentProfile | null>(null);
   const [deleteMemberTarget, setDeleteMemberTarget] = useState<AgentProfile | null>(null);
   const [deleteMemberError, setDeleteMemberError] = useState('');
-  const deleteMemberCancel = useRef<HTMLButtonElement | null>(null);
-  const archiveMemberDialog = useRef<HTMLElement | null>(null);
-  const memberMenuAction = useRef<HTMLButtonElement | null>(null);
-  const memberMenuElement = useRef<HTMLDivElement | null>(null);
   const memberReturnFocus = useRef<HTMLElement | null>(null);
   const [archiveMemberError, setArchiveMemberError] = useState('');
   const [showArchivedMembers, setShowArchivedMembers] = useState(false);
@@ -159,8 +153,6 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameError, setRenameError] = useState('');
-  const deleteDialog = useRef<HTMLElement | null>(null);
-  const cancelDeleteButton = useRef<HTMLButtonElement | null>(null);
   const [showConnections, setShowConnections] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900);
@@ -274,101 +266,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!memberMenuId) return;
-    memberMenuAction.current?.focus();
-    const dismiss = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('[data-member-menu]')) setMemberMenuId(null);
-    };
-    document.addEventListener('pointerdown', dismiss);
-    return () => document.removeEventListener('pointerdown', dismiss);
-  }, [memberMenuId]);
-
-  useLayoutEffect(() => {
-    if (!memberMenuId) return;
-    const positionMenu = () => {
-      const anchor = memberReturnFocus.current;
-      const menu = memberMenuElement.current;
-      const list = anchor?.closest('.conversation-list');
-      const sidebar = anchor?.closest('.conversation-sidebar');
-      if (!anchor || !menu || !list || !sidebar) return;
-      const anchorRect = anchor.getBoundingClientRect();
-      const menuRect = menu.getBoundingClientRect();
-      const listRect = list.getBoundingClientRect();
-      const sidebarRect = sidebar.getBoundingClientRect();
-      const margin = 8;
-      const scale = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')) || 1;
-      const width = Math.min(menuRect.width, sidebarRect.width - margin * 2);
-      const left = Math.max(sidebarRect.left + margin, Math.min(anchorRect.right - width, sidebarRect.right - width - margin));
-      let top = anchorRect.bottom + 4;
-      if (top + menuRect.height > listRect.bottom) top = anchorRect.top - menuRect.height - 4;
-      top = Math.max(margin, Math.min(top, window.innerHeight - menuRect.height - margin));
-      setMemberMenuPosition({ left: left / scale, top: top / scale, width: width / scale });
-    };
-    positionMenu();
-    window.addEventListener('resize', positionMenu);
-    window.addEventListener('scroll', positionMenu, true);
-    return () => {
-      window.removeEventListener('resize', positionMenu);
-      window.removeEventListener('scroll', positionMenu, true);
-    };
-  }, [memberMenuId, uiScale]);
-
-  useEffect(() => {
-    if (!archiveMemberTarget) return;
-    const dialog = archiveMemberDialog.current;
-    dialog?.querySelector<HTMLButtonElement>('button')?.focus();
-    const keepFocus = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault(); event.stopImmediatePropagation();
-        if (!chatOperation.current) { setArchiveMemberTarget(null); memberReturnFocus.current?.focus(); }
-      }
-      if (event.key !== 'Tab') return;
-      const buttons = dialog?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
-      if (!buttons?.length) { event.preventDefault(); return; }
-      const first = buttons[0]; const last = buttons[buttons.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', keepFocus, true);
-    return () => document.removeEventListener('keydown', keepFocus, true);
-  }, [archiveMemberTarget]);
-
-  useEffect(() => {
-    if (!deleteMemberTarget) return;
-    deleteMemberCancel.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault(); event.stopImmediatePropagation();
-        if (!chatBusy) { setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); }
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const buttons = document.querySelectorAll<HTMLButtonElement>('[aria-labelledby="delete-member-title"] button:not(:disabled)');
-      if (!buttons.length) { event.preventDefault(); return; }
-      if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons[buttons.length - 1].focus(); }
-      else if (!event.shiftKey && document.activeElement === buttons[buttons.length - 1]) { event.preventDefault(); buttons[0].focus(); }
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [deleteMemberTarget, chatBusy]);
-
-  useEffect(() => {
-    if (!deleteTarget) return;
-    cancelDeleteButton.current?.focus();
-    const keepDialogFocus = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !chatBusy) { event.preventDefault(); setDeleteTarget(null); return; }
-      if (event.key !== 'Tab') return;
-      const buttons = deleteDialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
-      if (!buttons?.length) return;
-      const first = buttons[0]; const last = buttons[buttons.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', keepDialogFocus);
-    return () => document.removeEventListener('keydown', keepDialogFocus);
-  }, [deleteTarget, chatBusy]);
-
-  useEffect(() => {
     if (database?.status !== 'ready' || !configuration.current) return;
     const controller = new AbortController();
     void request(configuration.current, `/conversations?limit=25&archived=${showArchived}`, controller.signal).then(value => {
@@ -438,8 +335,8 @@ export default function App() {
   const profileDirty = !!activeProfile && !!profileDrafts[activeProfile.id] && !profileMatchesIdentity(activeProfile, profileDrafts[activeProfile.id]);
   const profileHasPendingChanges = (profileId: string) => {
     const profile = profiles.find(item => item.id === profileId) ?? (conversation?.agent?.id === profileId ? conversation.agent : undefined);
-    const draft = profileDrafts[profileId];
-    return !!profile && (!!draft && !profileMatchesIdentity(profile, draft) || profileSavingId === profileId);
+    const currentDraft = profileDrafts[profileId];
+    return !!profile && (!!currentDraft && !profileMatchesIdentity(profile, currentDraft) || profileSavingId === profileId);
   };
   const profileErrorForActive = activeProfile ? profileErrors[activeProfile.id] || profileError : profileError;
   const updateMemberIdentity = (next: MemberIdentity) => {
@@ -453,38 +350,52 @@ export default function App() {
     setProfileDrafts(updated);
   };
   const identityForProfile = (profile: AgentProfile) => profileDraftsRef.current[profile.id] ?? toMemberIdentity(profile);
+
   useEffect(() => {
     if (database?.status !== 'ready' || !configuration.current || profileMutation.current) return;
-    const pending = profiles.flatMap(profile => {
-      const draft = profileDrafts[profile.id];
+    const pendingProfiles = profiles.flatMap(profile => {
+      const currentDraft = profileDrafts[profile.id];
       const failed = failedProfileDrafts.current[profile.id];
-      const failedAtCurrentRevision = failed && sameIdentity(failed.draft, draft ?? toMemberIdentity(profile)) && failed.retry === (profileRetryById[profile.id] ?? 0);
-      return draft && !profileMatchesIdentity(profile, draft) && !failedAtCurrentRevision ? [{ profile, draft }] : [];
+      const failedAtCurrentRevision = failed && sameIdentity(failed.draft, currentDraft ?? toMemberIdentity(profile)) && failed.retry === (profileRetryById[profile.id] ?? 0);
+      return currentDraft && !profileMatchesIdentity(profile, currentDraft) && !failedAtCurrentRevision ? [{ profile, draft: currentDraft }] : [];
     });
-    if (!pending.length) return;
+    if (!pendingProfiles.length) return;
     const timer = window.setTimeout(async () => {
       if (profileMutation.current) return;
       profileMutation.current = true;
       setProfileError('');
       try {
-        for (const { profile, draft } of pending) {
+        for (const { profile, draft: nextDraft } of pendingProfiles) {
           setProfileSavingId(profile.id);
           try {
-            const updated = await request(configuration.current!, `/agents/${profile.id}`, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: draft.name, role: draft.role, portraitId: draft.portrait, customPortrait: draft.customPortrait || null, accent: draft.accent, instructions: draft.instructions, defaultModelId: profile.defaultModelId, expectedRevision: profile.revision }) }) as AgentProfile;
+            const updated = await request(configuration.current!, `/agents/${profile.id}`, new AbortController().signal, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: nextDraft.name,
+                role: nextDraft.role,
+                portraitId: nextDraft.portrait,
+                customPortrait: nextDraft.customPortrait || null,
+                accent: nextDraft.accent,
+                instructions: nextDraft.instructions,
+                defaultModelId: profile.defaultModelId,
+                expectedRevision: profile.revision,
+              }),
+            }) as AgentProfile;
             delete failedProfileDrafts.current[profile.id];
             setProfileErrors(current => { const remaining = { ...current }; delete remaining[profile.id]; return remaining; });
             setProfiles(items => items.map(item => item.id === profile.id ? updated : item));
             setConversation(current => current?.agent?.id === profile.id ? { ...current, agent: updated } : current);
             setProfileDrafts(current => {
               const latest = current[profile.id];
-              if (!latest || !sameIdentity(latest, draft)) return current;
+              if (!latest || !sameIdentity(latest, nextDraft)) return current;
               const remaining = { ...current };
               delete remaining[profile.id];
               profileDraftsRef.current = remaining;
               return remaining;
             });
           } catch {
-            failedProfileDrafts.current[profile.id] = { draft, retry: profileRetryById[profile.id] ?? 0 };
+            failedProfileDrafts.current[profile.id] = { draft: nextDraft, retry: profileRetryById[profile.id] ?? 0 };
             setProfileErrors(current => ({ ...current, [profile.id]: 'Could not save this guild member. The draft is kept; retry the save before sending.' }));
           }
         }
@@ -692,11 +603,11 @@ export default function App() {
       setConversation(current => current?.agent?.id === updated.id ? { ...current, agent: updated } : current);
       setShowArchivedMembers(true);
       requestAnimationFrame(() => document.getElementById(`member-actions-${updated.id}`)?.focus());
-       if (!isArchived && selectedAgentId === profile.id && !conversation) { setIdentity(identityForProfile(updated)); }
+      if (!isArchived && selectedAgentId === profile.id && !conversation) { setIdentity(identityForProfile(updated)); }
       if (isArchived && selectedAgentId === profile.id && !conversation) {
         const nextProfile = profiles.find(item => item.id !== profile.id && !item.isArchived);
         setSelectedAgentId(nextProfile?.id ?? null);
-         if (nextProfile) { setIdentity(identityForProfile(nextProfile)); setChosenModel(nextProfile.defaultModelId ?? chosenModel); }
+        if (nextProfile) { setIdentity(identityForProfile(nextProfile)); setChosenModel(nextProfile.defaultModelId ?? chosenModel); }
       }
     } catch { setArchiveMemberError('Could not update this guild member. Wait for running or queued replies to finish, then try again. If this member changed elsewhere, reopen Guildhall.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
@@ -713,7 +624,7 @@ export default function App() {
       const next = profiles.find(item => item.id !== profile.id && !item.isArchived);
       if (selectedAgentId === profile.id || conversation?.agent?.id === profile.id) {
         setSelectedAgentId(next?.id ?? null);
-         if (next) { setIdentity(identityForProfile(next)); setChosenModel(next.defaultModelId ?? chosenModel); }
+        if (next) { setIdentity(identityForProfile(next)); setChosenModel(next.defaultModelId ?? chosenModel); }
       }
       setMemberMenuId(null); setDeleteMemberTarget(null);
       requestAnimationFrame(() => document.getElementById(`member-actions-${next?.id ?? ''}`)?.focus());
@@ -737,11 +648,12 @@ export default function App() {
       setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama');
       setChosenModel(details.conversation.selectedModelId ?? '');
       setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
-       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
+      if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       if (window.innerWidth < 900) setSidebarCollapsed(true);
     } catch { setChatError('Could not open chat. Check the host and database, then try again.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
+
   async function probeAllConnections() {
     if (!configuration.current || connectionsLoading) return;
     setConnectionsLoading(true);
@@ -809,7 +721,7 @@ export default function App() {
         target = await request(configuration.current, `/conversations/${created.id}`, new AbortController().signal) as ConversationDetails;
         draftsByKey.current.delete(draftContextKey(null, activeAgentId));
         setConversation(target);
-         if (target.agent) { setSelectedAgentId(target.agent.id); setIdentity(identityForProfile(target.agent)); }
+        if (target.agent) { setSelectedAgentId(target.agent.id); setIdentity(identityForProfile(target.agent)); }
         setHistory(items => [created, ...items.filter(item => item.id !== created.id)]);
       }
       target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
@@ -852,7 +764,8 @@ export default function App() {
     try { await navigator.clipboard.writeText(text); setCopiedMessageId(id); window.setTimeout(() => setCopiedMessageId(current => current === id ? null : current), 1400); }
     catch { setChatError('Could not copy this message. Check clipboard access for Guildhall.'); }
   }
-  const [memoryDraft, setMemoryDraft] = useState<{ text: string; scope: 'AboutYou' | 'Member' } | null>(null);
+
+  const [memoryDraft, setMemoryDraft] = useState<MemoryDraft | null>(null);
   const [memorySaving, setMemorySaving] = useState(false);
   const [memorySaveError, setMemorySaveError] = useState('');
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
@@ -890,44 +803,9 @@ export default function App() {
     }
   }
 
-  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      void sendMessage();
-    }
-  }
-
-  function addAttachments(files: File[]) {
-    if (chatBusy || database?.status !== 'ready') {
-      setChatError('Wait for the current action to finish before attaching files.');
-      return;
-    }
-    const combined = [...selectedFiles, ...files];
-    if (combined.length > 5) { setChatError('Attach up to five files per message.'); return; }
-    if (combined.some(file => file.size > 20 * 1024 * 1024) || combined.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024) {
-      setChatError('Each file can be up to 20 MB and all files together up to 50 MB.'); return;
-    }
-    setSelectedFiles(combined); setChatError('');
-  }
-
-  function pasteIntoComposer(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const files = Array.from(event.clipboardData.items ?? [])
-      .filter(item => item.kind === 'file').map(item => item.getAsFile()).filter((file): file is File => file !== null);
-    if (!files.length) files.push(...Array.from(event.clipboardData.files ?? []));
-    // Leave ordinary text pastes and native selection replacement untouched.
-    if (!files.length) return;
-    event.preventDefault();
-    addAttachments(files);
-    const text = event.clipboardData.getData('text/plain');
-    if (text) {
-      const textarea = event.currentTarget;
-      const { selectionStart, selectionEnd } = textarea;
-      setDraft(value => value.slice(0, selectionStart) + text + value.slice(selectionEnd));
-      window.setTimeout(() => {
-        if (document.activeElement === textarea) textarea.setSelectionRange(selectionStart + text.length, selectionStart + text.length);
-      }, 0);
-    }
-  }
+  const cancelDeleteMember = useCallback(() => setDeleteMemberTarget(null), []);
+  const cancelArchiveMember = useCallback(() => setArchiveMemberTarget(null), []);
+  const cancelDeleteConversation = useCallback(() => setDeleteTarget(null), []);
 
   const databaseLabel = databaseError ? 'Could not read database status.' : !database ? 'Not checked' :
     database.status === 'ready' ? 'Ready' : database.reason === 'migration_required' ? 'Migration required — run the explicit migration command.' :
@@ -947,233 +825,290 @@ export default function App() {
     automations: { title: 'Scheduled tasks are disabled', detail: 'Local scheduled automations are planned for a later phase. They will run on this computer, with the selected agent access policy, when enabled.' },
   };
   const activeSessionPanel = sessionPanelText[previewTab];
-  const visibleHistory = history.filter(item => item.title.toLowerCase().includes(search.toLowerCase()));
-  const queuedTurns = queuedPairs(conversation?.messages ?? []);
-  const queuedMessages = (conversation?.messages ?? []).filter(message => message.role === 'assistant' && message.status === 'Queued');
-  const profileGroups = profiles.filter(profile => !profile.isArchived).map(profile => ({ profile, sessions: visibleHistory.filter(item => item.agentDefinitionId === profile.id) }));
-  const archivedProfileGroups = profiles.filter(profile => profile.isArchived).map(profile => ({ profile, sessions: visibleHistory.filter(item => item.agentDefinitionId === profile.id) }));
-  const renderSession = (item: Conversation, index: number) => {
-    const title = item.title === 'New conversation' ? `Conversation ${history.length - index}` : item.title;
-    const activeRun = !!item.hasActiveRun || (conversation?.conversation.id === item.id && running);
-    const unread = isUnread(item.lastResponseUtc, readState[item.id]);
-    return <div className={`conversation-row ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} key={item.id} onContextMenu={event => { event.preventDefault(); setConversationMenu(item.id); }}>
-      <button className={`conversation-card ${conversation?.conversation.id === item.id ? 'selected' : ''} ${unread ? 'is-unread' : ''}`} aria-label={`Open ${title}`} title={database?.reason === 'migration_required' ? 'Apply the pending database migration to open chats' : undefined} disabled={chatBusy || database?.status !== 'ready'} onClick={() => void openSavedChat(item.id)}><span className="conversation-icon"><Icon name="chat" size={18} /></span><span><strong>{title}</strong><small className="conversation-model" title={item.selectedModelId || 'Choose a model'}><span>{item.selectedModelId || 'Choose a model'}</span></small></span>{unread && <span className="unread-dot" aria-label="Unread response" title="Unread response" /> }<span className="sr-only">{!unread && !activeRun ? 'Read' : ''}</span>{activeRun && <span className="dot offline" aria-label="Reply pending" title="Reply pending" />}</button>
-      <button className="conversation-menu-toggle icon-button" aria-label={`Actions for ${title}`} aria-expanded={conversationMenu === item.id} onClick={() => setConversationMenu(current => current === item.id ? null : item.id)}>···</button>
-      <div className={`conversation-actions ${conversationMenu === item.id ? 'expanded' : ''}`}>
-        <button aria-label={`Rename ${title}`} title="Rename conversation" disabled={chatBusy} onClick={() => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}><Icon name="edit" size={16} /><span>Rename</span></button>
-        <button aria-label={`${item.isArchived ? 'Restore' : 'Archive'} ${title}`} title={activeRun ? 'Wait for the response to finish' : item.isArchived ? 'Restore conversation' : 'Archive conversation'} disabled={chatBusy || activeRun} onClick={() => void archiveConversation(item)}>{item.isArchived ? '↩' : <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 4.5h14l-1 3H4l-1-3Zm1.5 4.5v7h11V9M10 10v4m0 0-2-2m2 2 2-2" /></svg>}<span>{item.isArchived ? 'Restore' : 'Archive'}</span></button>
-        <button aria-label={`Delete ${title}`} title={activeRun ? 'Wait for the response to finish' : 'Permanently delete conversation'} disabled={chatBusy || activeRun} onClick={() => { setDeleteError(''); setDeleteTarget(item); }}><Icon name="trash" size={16} /><span>Delete</span></button>
-        <button type="button" aria-label={`Assign ${title} to guild member — planned`} title="Assign to guild member — planned for Phase 7" disabled><Icon name="council" size={16} /><span>Assign to guild member…</span></button>
-      </div>
-    </div>;
-  };
 
-  const renderMember = ({ profile, sessions }: { profile: AgentProfile; sessions: Conversation[] }) => {
-    const isCollapsed = !!collapsedMembers[profile.id] && !search.trim();
-    return <section className={`council-group ${activeAgentId === profile.id ? 'active' : ''}`} key={profile.id}>
-    <div className="council-group-heading" data-member-menu={memberMenuId === profile.id ? '' : undefined} onContextMenu={event => { event.preventDefault(); memberReturnFocus.current = document.getElementById(`member-actions-${profile.id}`); setMemberMenuId(profile.id); }} onKeyDown={event => {
-      if (event.key === 'Escape' && memberMenuId === profile.id) { event.preventDefault(); event.stopPropagation(); setMemberMenuId(null); memberReturnFocus.current?.focus(); }
-      if (event.key === 'Tab') setMemberMenuId(null);
-    }}>
-      <button type="button" className={`icon-button council-collapse-toggle ${isCollapsed ? '' : 'expanded'}`} aria-expanded={!isCollapsed} aria-controls={`member-sessions-${profile.id}`} aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.name} sessions`} title={`${isCollapsed ? 'Expand' : 'Collapse'} sessions`} onClick={() => setCollapsedMembers(current => ({ ...current, [profile.id]: !isCollapsed }))}><Icon name="chevron" size={14} /></button>
-      <button className="council-profile-select" aria-label={`Select ${profile.name}`} aria-pressed={activeAgentId === profile.id} disabled={chatBusy} onClick={() => { switchComposerContext(null, profile.id); setConversation(null); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setChosenModel(profile.defaultModelId ?? chosenModel); }}><Portrait identity={toMemberIdentity(profile)} /><span><strong>{profile.name}</strong><small>{profile.isArchived ? 'Archived · ' : ''}{profile.role} · {sessions.length} shown</small></span></button>
-      {!profile.isArchived && <button className="icon-button council-new-session" aria-label={`New session with ${profile.name}`} title={`New session with ${profile.name}`} disabled={chatBusy || !chosenModel || database?.status !== 'ready'} onClick={() => void openChat(true, profile.id)}><Icon name="plus" size={16} /></button>}
-      <button id={`member-actions-${profile.id}`} className="icon-button member-menu-toggle" aria-label={`Member actions for ${profile.name}`} aria-haspopup="menu" aria-expanded={memberMenuId === profile.id} aria-controls={memberMenuId === profile.id ? `member-menu-${profile.id}` : undefined} onClick={event => { memberReturnFocus.current = event.currentTarget; setMemberMenuId(value => value === profile.id ? null : profile.id); }}>···</button>
-      {memberMenuId === profile.id && createPortal(<div ref={memberMenuElement} data-member-menu="" style={memberMenuPosition ?? undefined} className="member-menu" role="menu" id={`member-menu-${profile.id}`} aria-label={`Member actions for ${profile.name}`} onKeyDown={event => {
-        if (event.key === 'Escape') { event.preventDefault(); setMemberMenuId(null); memberReturnFocus.current?.focus(); return; }
-        if (event.key === 'Tab') {
-          event.preventDefault();
-          const group = memberReturnFocus.current?.closest('.council-group');
-          const nextSession = group?.querySelector<HTMLButtonElement>('.conversation-row button');
-          const nextMember = group?.nextElementSibling?.querySelector<HTMLButtonElement>('.council-profile-select');
-          setMemberMenuId(null);
-          if (event.shiftKey) memberReturnFocus.current?.focus();
-          else (nextSession ?? nextMember ?? memberReturnFocus.current)?.focus();
-          return;
-        }
-        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-          event.preventDefault();
-          const actions = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
-          if (!actions.length) return;
-          const current = actions.indexOf(document.activeElement as HTMLButtonElement);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? actions.length - 1 : (current + (event.key === 'ArrowUp' ? -1 : 1) + actions.length) % actions.length;
-          actions[next]?.focus();
-        }
-      }}>
-        <button ref={memberMenuAction} className="member-menu-item" role="menuitem" aria-label={profile.isArchived ? 'Restore member' : 'Archive member'} title={profile.isArchived ? 'Restore this guild member' : 'Archive this member and keep its sessions'} disabled={chatBusy || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setArchiveMemberError(''); if (profile.isArchived) void setGuildMemberArchived(profile, false); else { setMemberMenuId(null); setArchiveMemberTarget(profile); } }}><Icon name="archive" size={15} /><span>{profile.isArchived ? 'Restore' : 'Archive'}</span></button>
-        <button className="member-menu-item destructive" role="menuitem" aria-label="Delete member and sessions" title="Permanently delete this member and all sessions" disabled={chatBusy || profileHasPendingChanges(profile.id) || database?.status !== 'ready'} onClick={() => { setDeleteMemberError(''); setMemberMenuId(null); setDeleteMemberTarget(profile); }}><Icon name="trash" size={15} /><span>Delete…</span></button>
-      </div>, document.body)}
-    </div>
-    {!isCollapsed && <div id={`member-sessions-${profile.id}`} className="council-sessions">
-      {sessions.map(item => renderSession(item, history.findIndex(entry => entry.id === item.id)))}
-      {!sessions.length && <p className="council-no-sessions">{search ? 'No matching sessions.' : showArchived ? 'No archived sessions.' : 'No sessions yet.'}</p>}
-    </div>}
-  </section>;
-  };
-
-  return <main className={`workspace ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--accent': identity.accent, '--rail-width': `${railWidth}px`, '--council-width': `${effectiveCouncilWidth}px`, '--member-width': `${Math.min(memberPaneWidth, rightPaneResizeMax)}px`, '--tools-width': `${Math.min(toolsPaneWidth, rightPaneResizeMax)}px`, '--right-pane-width': `${viewportWidth > 1279 ? Math.min(rightPaneWidth, rightPaneResizeMax) : 0}px` } as CSSProperties}>
-    <header className="app-bar">
-      <div className="wordmark"><Icon name="gate" size={34} /><span>Guildhall</span></div>
-      <span className="app-bar-divider" /><span className="workspace-title">Personal council</span>{instanceTag && <span className="instance-badge" aria-label={`Instance ${instanceTag}`} title={configuration.current?.windowTitle || instanceTag}>{instanceTag}</span>}
-      <button className="sidebar-toggle icon-button" aria-label={sidebarCollapsed ? 'Expand chats sidebar' : 'Collapse chats sidebar'} title="Toggle chats sidebar" onClick={() => setSidebarCollapsed(value => !value)}><Icon name="panel" /></button>
-      <span className="app-bar-spacer" /><button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { setShowSettings(false); setShowConnections(!showConnections); }} aria-expanded={showConnections}><span className={`dot ${host === 'Connected' ? '' : 'offline'}`} /><Icon name="connections" size={17} /><span>Connections</span></button>
-      <button className="member-toggle" aria-label="Customize guild member" aria-expanded={showMember} onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}><Portrait identity={identity} /><span>{memberName}</span></button>
-    </header>
-    <nav className="nav-rail" aria-label="Workspace navigation">
-      <button className="rail-active" aria-label="Chats" title="Chats" onClick={() => { setShowConnections(false); setShowSettings(false); }}><Icon name="chat" size={25} /></button>
-      <button aria-label="Guild member appearance" title="Guild member" onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}><Icon name="council" size={25} /></button>
-      <button disabled title="Projects — planned" aria-label="Projects — planned"><Icon name="folder" size={25} /></button>
-      <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="clock" size={25} /></button>
-      <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="shield" size={25} /></button><span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
-    </nav>
-    <aside id="council-pane" className="conversation-sidebar" aria-label="Council and sessions"><div className="sidebar-top"><h1>Your council</h1><label className="search-box"><Icon name="search" /><input aria-label="Search loaded conversations" placeholder="Search chats…" value={search} onChange={event => setSearch(event.target.value)} /></label><button className="new-chat" onClick={() => void openChat(true)} disabled={chatBusy || profileDirty || profileSaving || !chosenModel || !activeProfile || activeProfile.isArchived || database?.status !== 'ready'}><Icon name="plus" /> New session</button><button className="add-member" onClick={() => void addGuildMember()} disabled={chatBusy || profileDirty || profileSaving || database?.status !== 'ready'}><Icon name="council" size={17} /> Add guild member</button></div>
-      <div className="conversation-filter" role="group" aria-label="Conversation list filter"><button className={!showArchived ? 'active' : ''} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>Chats</button><button className={showArchived ? 'active' : ''} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>Archived</button></div>
-      <div className="conversation-list">{profileGroups.map(renderMember)}
-        <button className="archived-members-toggle" aria-expanded={showArchivedMembers} aria-controls="archived-members" onClick={() => setShowArchivedMembers(value => !value)}>{showArchivedMembers ? '▾' : '▸'} Archived members ({archivedProfileGroups.length})</button>
-        {showArchivedMembers && <div id="archived-members">{archivedProfileGroups.map(renderMember)}{!archivedProfileGroups.length && <p className="sidebar-empty">No archived members.</p>}</div>}
-        {!profiles.length && visibleHistory.map(renderSession)}
-        {!history.length && !profiles.length && <p className="sidebar-empty">Your conversations will live here.</p>}
-      </div>
-      <div className="sidebar-footer"><span className="dot" /> Local workspace <small>SQL Server · Ollama</small></div>
-      <PaneResizeHandle className="council-resizer" label="Resize council and chat panes" controls="council-pane chat-pane" value={Math.min(councilWidth, councilResizeMax)} min={220} max={councilResizeMax} direction={1} onResize={setCouncilWidth} />
-    </aside>
-    <div className={`workspace-content ${showPreview ? 'with-preview' : ''} ${showMember ? 'with-member' : ''}`}>
-    <div id="chat-pane" className="primary-pane">
-    {showConnections && <aside className="connections-panel"><div className="toolbar"><h2>Connection status</h2><button onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Refresh'}</button></div>
-    <section aria-label="Connection status" aria-live="polite">
-      <article><h3>Agent host</h3><p>{host}</p><small>Authenticated connection on this computer</small></article>
-      <article><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
-      <article><h3>Local models</h3><p>{modelLabel}</p>{models?.status === 'available' && <ul>{models.models.map(model => <li key={model.id}>{model.displayName}</li>)}</ul>}<small>Discovered through the agent host</small></article>
-    </section><Suspense fallback={<section className="connection-catalog" aria-busy="true"><small>Loading connections catalog…</small></section>}><ConnectionsCatalog config={configuration.current} catalog={connections} loading={connectionsLoading} onCatalogUpdated={setConnections} onProbeAll={() => void probeAllConnections()} /></Suspense></aside>}
-    {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading behavior settings…</small></section>}><GuildhallBehaviorSettings config={configuration.current} /></Suspense><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading shared memory…</small></section>}><section className="settings-section"><MemoryNotesPanel config={configuration.current} scope="AboutYou" refreshKey={memoryRefreshKey} title="About you" description="Shared facts and preferences available to every guild member." /></section></Suspense><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>{(conversation?.messages ?? []).some(m => m.role === 'assistant' && m.status === 'Completed' && (m.inputTokens != null || m.outputTokens != null)) ? 'Active session measured usage' : 'No provider usage data is connected.'}</small></div>{(() => {
-      const assistantTurns = (conversation?.messages ?? []).filter(m => m.role === 'assistant' && m.status === 'Completed');
-      const totalIn = assistantTurns.reduce((sum, m) => sum + (m.inputTokens ?? 0), 0);
-      const totalOut = assistantTurns.reduce((sum, m) => sum + (m.outputTokens ?? 0), 0);
-      const hasMeasured = assistantTurns.some(m => m.inputTokens != null || m.outputTokens != null);
-      if (!hasMeasured) return <p>No measured token usage recorded yet in this session. Guildhall reports measured provider tokens and will never fabricate spending totals.</p>;
-      return <p>Measured tokens in this session: {totalIn.toLocaleString()} input · {totalOut.toLocaleString()} output ({assistantTurns.length} completed turn{assistantTurns.length === 1 ? '' : 's'}). Subscription CLI and local Ollama turns are not billed per token.</p>;
-    })()}</section></aside>}
-    <section className="chat" aria-label="Local chat">
-      <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => { setShowMember(false); if (!showPreview && window.innerWidth < 900) setSidebarCollapsed(true); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
-      <div className="messages" ref={transcript} tabIndex={0} aria-label="Messages" onScroll={scrolling.onScroll} onWheel={scrolling.onWheel} onKeyDown={scrolling.onKeyDown}><div className="transcript-content" ref={scrolling.content}>
-        {!conversation?.messages.length && !activeProfile?.isArchived && <div className="chat-welcome"><span className="welcome-symbol"><Icon name="gate" size={52} /></span><span className="eyebrow">YOUR SEAT AT THE TABLE</span><h1>What shall we work on?</h1><p>Bring an idea. We’ll find a way forward.<br />Everything stays in your workspace.</p><div className="welcome-cards">{starterSuggestions(activeProfile).map(suggestion => <button key={suggestion} type="button" onClick={() => { setDraft(suggestion); composerInput.current?.focus(); }}>{suggestion}</button>)}</div></div>}
-        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? message.role === 'assistant' ? <AssistantResponse text={message.text} streaming={message.status === 'Running'} durationSeconds={message.status === 'Completed' ? message.responseDurationSeconds : null} /> : <StreamingMarkdown text={message.text} streaming={false} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}<span className="waiting-dots"><span>.</span><span>.</span><span>.</span></span></span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.errorCode === 'cli_not_installed' ? 'This CLI harness was not found on PATH. Open Connections to install it.' : message.errorCode === 'cli_needs_signin' ? 'This CLI harness requires sign-in in your terminal before it can run.' : message.errorCode === 'cli_permission_denied' ? 'This CLI harness tried to run a tool or command that requires interactive approval (coming in Phases 3–4). Attach files directly in the composer or ask without tool/shell execution.' : message.errorCode === 'provider_auth_failed' ? 'Provider rejected the configured API key. Check Connections.' : message.errorCode === 'provider_rate_limited' ? 'Provider rate limit exceeded. Wait a moment and try again.' : message.errorCode === 'provider_unavailable' ? 'Backing engine is unavailable. Check Connections and try again.' : message.errorCode === 'generation_timeout' ? 'The reply timed out before finishing.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Connections and the selected model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.role === 'assistant' ? splitThinking(message.text).answer : message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button>{database?.status === 'ready' && <button type="button" className="save-memory-button" aria-label="Save to memory" title="Save to memory" onClick={event => { memoryReturnFocus.current = event.currentTarget; const raw = message.role === 'assistant' ? splitThinking(message.text).answer : message.text; setMemorySaveError(''); setMemoryDraft({ text: raw.slice(0, 2000), scope: activeProfile ? 'Member' : 'AboutYou' }); }}>Save to memory</button>}<span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
-      </div></div>
-      <div className="composer-region">{activeProfile?.isArchived && <p className="archived-member-notice">Archived member · Saved sessions are kept. Restore the member to start a new session.</p>}{archiveMemberError && !archiveMemberTarget && <p className="chat-error" role="alert">{archiveMemberError}</p>}{chatError && <p className="chat-error" role="alert">{chatError}</p>}
-      {!!queuedMessages.length && <section className="queue-panel" aria-label="Queued messages"><h3>{queuedMessages.length} queued</h3>{queuedMessages.map(message => {
-        const userMessage = conversation?.messages.find(candidate => candidate.role === 'user' && candidate.turnNumber === message.turnNumber);
-        return <div className="queue-item" key={message.id}><span className="queue-snippet">{userMessage?.text || (userMessage?.attachments?.length ? `${userMessage.attachments.length} attachment${userMessage.attachments.length === 1 ? '' : 's'}` : 'Attachment message')}</span>{!!userMessage?.attachments?.length && <span className="queue-file-count">{userMessage.attachments.length} {userMessage.attachments.length === 1 ? 'file' : 'files'}</span>}<div className="queue-actions"><button type="button" aria-label={`Send queued message ${message.turnNumber} now`} title="Send now" disabled={chatBusy} onClick={() => void promoteQueuedMessage(message.runId)}><Icon name="send" size={17} /></button><button type="button" aria-label={`Edit queued message ${message.turnNumber}`} title={hasDraft ? 'Clear your draft before editing a queued message' : 'Edit'} disabled={chatBusy || hasDraft} onClick={() => void editQueuedMessage(message, userMessage)}><Icon name="edit" size={17} /></button><button type="button" aria-label={`Remove queued message ${message.turnNumber}`} title="Delete" disabled={chatBusy} onClick={() => void removeQueuedMessage(message.runId)}><Icon name="trash" size={17} /></button></div></div>;
-      })}</section>}
-      {editingQueuedRunId && <div className="queue-editing" role="status">Editing queued message <button type="button" onClick={() => { setEditingQueuedRunId(null); setDraft(''); setSelectedFiles([]); }}>Cancel edit</button></div>}
-      <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {formatAttachmentSize(file.size)}</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}{editingQueuedRunId && <span className="queue-editing-label">Editing queued message · Send to replace it</span>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a backing engine & model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || (chosenProvider === 'ollama' && (!models || models.status !== 'available')) || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
-      <input ref={filePicker} className="sr-only" type="file" multiple aria-label="Choose attachments" onChange={event => { addAttachments(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
-      <div className="composer-toolbar"><button className="attach-button" aria-label="Add attachments" title="Add files (up to 20 MB each)" onClick={() => filePicker.current?.click()} disabled={chatBusy || database?.status !== 'ready'}><Icon name="attach" size={22} /></button>{connections && (() => {
-        const activeEngines = connections.entries.filter(e => !e.isPlanned);
-        const connected = activeEngines.filter(e => e.status === 'Connected');
-        const disconnected = activeEngines.filter(e => e.status !== 'Connected');
-        const kindTag = (kind: string) => kind === 'local' ? 'Local' : kind === 'cloud_api' ? 'API' : 'CLI';
-        const engineOptions: DropUpOption[] = [
-          ...connected.map(entry => ({
-            value: entry.id,
-            label: `${kindTag(entry.engineKind)} · ${entry.displayName}`,
-            group: 'Connected',
-          })),
-          ...disconnected.map(entry => ({
-            value: entry.id,
-            label: `${kindTag(entry.engineKind)} · ${entry.displayName} (${entry.status.toLowerCase()})`,
-            group: 'Not connected',
-            disabled: true,
-          })),
-        ];
-        return (
-          <DropUpSelect
-            ariaLabel="Backing engine"
-            prefixLabel="Engine"
-            value={chosenProvider}
-            placeholder="Backing engine"
-            disabled={chatBusy}
-            options={engineOptions}
-            onChange={nextProvider => {
-              const entry = connections.entries.find(e => e.id === nextProvider);
-              const nextModel = entry?.defaultModelId ?? entry?.models[0]?.id ?? '';
-              void selectBackingEngine(nextProvider, nextModel);
-            }}
-          />
-        );
-      })()}{(() => {
-        const activeEntry = connections?.entries.find(e => e.id === chosenProvider);
-        const isCli = activeEntry?.engineKind === 'cli_harness';
-        const availableModels = chosenProvider === 'ollama'
-          ? (models?.models ?? [])
-          : (activeEntry?.models ?? []);
-        const groupedModels = groupModelsByEffort(availableModels);
-        const activeGroup = groupedModels.find(g => g.defaultModelId === chosenModel || g.variants.some(v => v.modelId === chosenModel));
-        const selectedBaseKey = activeGroup?.baseKey ?? chosenModel;
-        const modelOptions: DropUpOption[] = [
-          ...(chosenModel && !activeGroup
-            ? [{ value: chosenModel, label: `${chosenModel} (unavailable)`, disabled: true }]
-            : []),
-          ...groupedModels.map(g => ({ value: g.baseKey, label: g.displayName })),
-        ];
-        return <>
-          <DropUpSelect
-            ariaLabel={`Model for ${conversation ? 'this conversation' : 'a new conversation'}`}
-            prefixLabel="Model"
-            value={selectedBaseKey}
-            placeholder="Choose a model"
-            disabled={chatBusy || (chosenProvider === 'ollama' && models?.status !== 'available')}
-            options={modelOptions}
-            onChange={nextBaseKey => {
-              const group = groupedModels.find(g => g.baseKey === nextBaseKey);
-              void selectModel(group ? group.defaultModelId : nextBaseKey);
-            }}
-          />
-          {activeGroup && activeGroup.variants.length > 1 && (
-            <DropUpSelect
-              ariaLabel="Reasoning effort"
-              prefixLabel="Effort"
-              value={chosenModel}
-              disabled={chatBusy}
-              options={activeGroup.variants.map(v => ({ value: v.modelId, label: v.label }))}
-              onChange={nextModelId => void selectModel(nextModelId)}
+  return (
+    <main
+      className={`workspace ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}
+      style={{
+        '--accent': identity.accent,
+        '--rail-width': `${railWidth}px`,
+        '--council-width': `${effectiveCouncilWidth}px`,
+        '--member-width': `${Math.min(memberPaneWidth, rightPaneResizeMax)}px`,
+        '--tools-width': `${Math.min(toolsPaneWidth, rightPaneResizeMax)}px`,
+        '--right-pane-width': `${viewportWidth > 1279 ? Math.min(rightPaneWidth, rightPaneResizeMax) : 0}px`,
+      } as CSSProperties}
+    >
+      <header className="app-bar">
+        <div className="wordmark"><Icon name="gate" size={34} /><span>Guildhall</span></div>
+        <span className="app-bar-divider" /><span className="workspace-title">Personal council</span>
+        {instanceTag && <span className="instance-badge" aria-label={`Instance ${instanceTag}`} title={configuration.current?.windowTitle || instanceTag}>{instanceTag}</span>}
+        <button className="sidebar-toggle icon-button" aria-label={sidebarCollapsed ? 'Expand chats sidebar' : 'Collapse chats sidebar'} title="Toggle chats sidebar" onClick={() => setSidebarCollapsed(value => !value)}>
+          <Icon name="panel" />
+        </button>
+        <span className="app-bar-spacer" />
+        <button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { setShowSettings(false); setShowConnections(!showConnections); }} aria-expanded={showConnections}>
+          <span className={`dot ${host === 'Connected' ? '' : 'offline'}`} /><Icon name="connections" size={17} /><span>Connections</span>
+        </button>
+        <button className="member-toggle" aria-label="Customize guild member" aria-expanded={showMember} onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}>
+          <Portrait identity={identity} /><span>{memberName}</span>
+        </button>
+      </header>
+      <nav className="nav-rail" aria-label="Workspace navigation">
+        <button className="rail-active" aria-label="Chats" title="Chats" onClick={() => { setShowConnections(false); setShowSettings(false); }}><Icon name="chat" size={25} /></button>
+        <button aria-label="Guild member appearance" title="Guild member" onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}><Icon name="council" size={25} /></button>
+        <button disabled title="Projects — planned" aria-label="Projects — planned"><Icon name="folder" size={25} /></button>
+        <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="clock" size={25} /></button>
+        <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="shield" size={25} /></button>
+        <span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
+      </nav>
+      <CouncilSidebar
+        profiles={profiles}
+        history={history}
+        activeAgentId={activeAgentId}
+        activeProfile={activeProfile}
+        conversation={conversation}
+        running={running}
+        readState={readState}
+        database={database}
+        chatBusy={chatBusy}
+        chosenModel={chosenModel}
+        profileDirty={profileDirty}
+        profileSaving={profileSaving}
+        profileHasPendingChanges={profileHasPendingChanges}
+        search={search}
+        onSearchChange={setSearch}
+        showArchived={showArchived}
+        onShowArchivedChange={setShowArchived}
+        showArchivedMembers={showArchivedMembers}
+        onToggleArchivedMembers={() => setShowArchivedMembers(value => !value)}
+        collapsedMembers={collapsedMembers}
+        onToggleMemberCollapsed={(profileId, currentlyCollapsed) => setCollapsedMembers(current => ({ ...current, [profileId]: !currentlyCollapsed }))}
+        conversationMenu={conversationMenu}
+        onSetConversationMenu={setConversationMenu}
+        memberMenuId={memberMenuId}
+        onSetMemberMenuId={setMemberMenuId}
+        memberReturnFocus={memberReturnFocus}
+        uiScale={uiScale}
+        councilWidth={councilWidth}
+        councilResizeMax={councilResizeMax}
+        onResizeCouncil={setCouncilWidth}
+        onSelectMember={profile => {
+          switchComposerContext(null, profile.id);
+          setConversation(null);
+          setSelectedAgentId(profile.id);
+          setIdentity(identityForProfile(profile));
+          setChosenModel(profile.defaultModelId ?? chosenModel);
+        }}
+        onNewSession={agentId => void openChat(true, agentId ?? activeAgentId)}
+        onAddGuildMember={() => void addGuildMember()}
+        onOpenSavedChat={id => void openSavedChat(id)}
+        onRequestRenameConversation={(item, title) => { setRenameError(''); setRenameTarget(item); setRenameDraft(title); }}
+        onArchiveConversation={item => void archiveConversation(item)}
+        onRequestDeleteConversation={item => { setDeleteError(''); setDeleteTarget(item); }}
+        onRestoreMember={profile => { setArchiveMemberError(''); void setGuildMemberArchived(profile, false); }}
+        onRequestArchiveMember={profile => { setArchiveMemberError(''); setArchiveMemberTarget(profile); }}
+        onRequestDeleteMember={profile => { setDeleteMemberError(''); setDeleteMemberTarget(profile); }}
+      />
+      <div className={`workspace-content ${showPreview ? 'with-preview' : ''} ${showMember ? 'with-member' : ''}`}>
+        <div id="chat-pane" className="primary-pane">
+          {showConnections && (
+            <aside className="connections-panel">
+              <div className="toolbar">
+                <h2>Connection status</h2>
+                <button onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Refresh'}</button>
+              </div>
+              <section aria-label="Connection status" aria-live="polite">
+                <article><h3>Agent host</h3><p>{host}</p><small>Authenticated connection on this computer</small></article>
+                <article><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
+                <article>
+                  <h3>Local models</h3><p>{modelLabel}</p>
+                  {models?.status === 'available' && <ul>{models.models.map(model => <li key={model.id}>{model.displayName}</li>)}</ul>}
+                  <small>Discovered through the agent host</small>
+                </article>
+              </section>
+              <Suspense fallback={<section className="connection-catalog" aria-busy="true"><small>Loading connections catalog…</small></section>}>
+                <ConnectionsCatalog config={configuration.current} catalog={connections} loading={connectionsLoading} onCatalogUpdated={setConnections} onProbeAll={() => void probeAllConnections()} />
+              </Suspense>
+            </aside>
+          )}
+          {showSettings && (
+            <WorkspaceSettingsPanel
+              config={configuration.current}
+              memoryRefreshKey={memoryRefreshKey}
+              uiScale={uiScale}
+              onUiScaleChange={setUiScale}
+              messages={conversation?.messages ?? []}
+              onClose={() => setShowSettings(false)}
             />
           )}
-          {isCli && (
-            <DropUpSelect
-              ariaLabel="CLI harness mode"
-              prefixLabel="Mode"
-              value={chosenHarnessMode}
-              disabled={chatBusy}
-              options={[
-                { value: 'read_only', label: 'Read-only (safe)' },
-                { value: 'workspace_write', label: 'Workspace write (scoped)' },
-              ]}
-              onChange={nextMode => void selectBackingEngine(chosenProvider, chosenModel, nextMode)}
+          <section className="chat" aria-label="Local chat">
+            <div className="pane-header">
+              <span className="pane-icon"><Icon name="chat" size={17} /></span>
+              <h2>{conversation?.conversation.title || 'A new conversation'}</h2>
+              <span className="lane-label">Saved locally</span>
+              <div className="chat-actions">
+                <button
+                  onClick={() => { setShowMember(false); if (!showPreview && window.innerWidth < 900) setSidebarCollapsed(true); setShowPreview(!showPreview); }}
+                  aria-pressed={showPreview}
+                  title="Toggle session tools"
+                >
+                  <Icon name="panel" size={16} /><span>Session tools</span>
+                </button>
+              </div>
+            </div>
+            <ChatTranscript
+              config={configuration.current}
+              conversation={conversation}
+              activeProfile={activeProfile}
+              identity={identity}
+              memberName={memberName}
+              database={database}
+              scrolling={scrolling}
+              copiedMessageId={copiedMessageId}
+              onCopyMessage={(id, text) => void copyMessage(id, text)}
+              onSelectStarter={suggestion => { setDraft(suggestion); composerInput.current?.focus(); }}
+              onSaveToMemory={(text, trigger) => {
+                memoryReturnFocus.current = trigger;
+                setMemorySaveError('');
+                setMemoryDraft({ text, scope: activeProfile ? 'Member' : 'AboutYou' });
+              }}
             />
-          )}
-        </>;
-      })()}<span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
-      <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
-    </section></div>
-    {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember config={configuration.current} profileId={activeProfile?.id} memoryRefreshKey={memoryRefreshKey} activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }} onChange={updateMemberIdentity} onClose={() => setShowMember(false)} storageError={profileErrorForActive || storageError} saving={profileSaving} onRetrySave={() => { if (!activeProfile) return; const profileId = activeProfile.id; setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; }); setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 })); }} retryAvailable={profileDirty && !!profileErrorForActive} />}
-    {toolsPanel.present && <aside id="session-tools-pane" className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools"><PaneResizeHandle className="right-pane-resizer tools-resizer" label="Resize Session Tools pane" controls="session-tools-pane" value={Math.min(toolsPaneWidth, rightPaneResizeMax)} min={240} max={rightPaneResizeMax} direction={-1} onResize={setToolsPaneWidth} /><div className="pane-header"><span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span><button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button></div><div className="session-tabs" role="group" aria-label="Session tools">{sessionTabs.map(tab => <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>{tab.label}<small>{tab.status}</small></button>)}</div>{previewTab === 'context' ? <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading context inspector…</small></section>}><ContextInspector config={configuration.current} conversationId={conversation?.conversation.id ?? null} refreshToken={(conversation?.conversation.revision ?? 0) + memoryRefreshKey + (running ? 1 : 0)} /></Suspense> : <section key={previewTab} className="session-placeholder"><span className="session-placeholder-icon">{previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}</span><span className="eyebrow">{activeSessionPanel.title}</span><p>{activeSessionPanel.detail}</p><small>Preview only · This panel does not run commands or connect external services.</small></section>}</aside>}
-    </div>
-    {deleteMemberTarget && <div className="dialog-backdrop"><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-member-title" aria-describedby="delete-member-description"><h2 id="delete-member-title">Permanently delete {deleteMemberTarget.name}?</h2><p id="delete-member-description">This permanently deletes <strong>{deleteMemberTarget.name}</strong>, all of their saved sessions, messages, and attachments. This cannot be undone. Existing SQL backups may still contain copies. Replies must finish before deletion.</p>{deleteMemberError && <p className="chat-error" role="alert">{deleteMemberError}</p>}<div><button ref={deleteMemberCancel} disabled={chatBusy} onClick={() => { setDeleteMemberTarget(null); memberReturnFocus.current?.focus(); }}>Cancel</button><button className="danger-button" disabled={chatBusy} onClick={() => void deleteGuildMember(deleteMemberTarget)}>{chatBusy ? 'Deleting…' : 'Delete member and sessions'}</button></div></section></div>}
-    {archiveMemberTarget && <div className="dialog-backdrop"><section ref={archiveMemberDialog} tabIndex={-1} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-member-title" aria-describedby="archive-member-description"><h2 id="archive-member-title">Archive this member?</h2><p id="archive-member-description"><strong>{archiveMemberTarget.name}</strong> will leave the active council. All saved sessions and messages are kept in Archived members. You can restore this member later. Running or queued replies must finish first.</p>{archiveMemberError && <p className="chat-error" role="alert">{archiveMemberError}</p>}<div><button disabled={chatBusy} onClick={() => { setArchiveMemberTarget(null); memberReturnFocus.current?.focus(); }}>Cancel</button><button disabled={chatBusy} onClick={() => void setGuildMemberArchived(archiveMemberTarget, true)}>{chatBusy ? 'Archiving…' : 'Archive member'}</button></div></section></div>}
-    {deleteTarget && <div className="dialog-backdrop"><section ref={deleteDialog} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><h2 id="delete-title">Delete this conversation?</h2><p id="delete-description"><strong>{deleteTarget.title}</strong> and its messages will be permanently removed from Guildhall. This cannot be undone. Existing SQL backups may still contain copies.</p>{deleteError && <p className="chat-error" role="alert">{deleteError}</p>}<div><button ref={cancelDeleteButton} onClick={() => setDeleteTarget(null)} disabled={chatBusy}>Cancel</button><button className="danger-button" onClick={() => void deleteConversation()} disabled={chatBusy || deleteTarget.hasActiveRun}>{chatBusy ? 'Deleting…' : 'Delete conversation'}</button></div></section></div>}
-    {renameTarget && <div className="dialog-backdrop"><form className="confirm-dialog" onSubmit={event => { event.preventDefault(); void renameConversation(); }} aria-labelledby="rename-title"><h2 id="rename-title">Rename chat</h2><label className="rename-field">Chat name<input autoFocus maxLength={200} value={renameDraft} onChange={event => setRenameDraft(event.target.value)} /></label>{renameError && <p className="chat-error" role="alert">{renameError}</p>}<div><button type="button" onClick={() => setRenameTarget(null)} disabled={chatBusy}>Cancel</button><button type="submit" disabled={chatBusy || !renameDraft.trim()}>{chatBusy ? 'Saving…' : 'Save name'}</button></div></form></div>}
-    {memoryDraft && <div className="dialog-backdrop"><form className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="save-memory-title" onKeyDown={event => { if (event.key === 'Escape' && !memorySaving) { event.preventDefault(); closeMemoryDialog(); } }} onSubmit={event => { event.preventDefault(); void saveMessageToMemory(); }}><h2 id="save-memory-title">Save to memory</h2><div className="memory-scope-choice" role="group" aria-label="Memory scope"><button type="button" className={memoryDraft.scope === 'AboutYou' ? 'selected' : ''} aria-pressed={memoryDraft.scope === 'AboutYou'} onClick={() => setMemoryDraft(current => current ? { ...current, scope: 'AboutYou' } : null)}>About you (shared)</button>{activeProfile && <button type="button" className={memoryDraft.scope === 'Member' ? 'selected' : ''} aria-pressed={memoryDraft.scope === 'Member'} onClick={() => setMemoryDraft(current => current ? { ...current, scope: 'Member' } : null)}>{memberName} (private)</button>}</div><label className="rename-field">Memory note<textarea autoFocus maxLength={2000} rows={4} value={memoryDraft.text} onChange={event => setMemoryDraft(current => current ? { ...current, text: event.target.value } : null)} /></label><small>{memoryDraft.text.trim().length}/2000</small>{memorySaveError && <p className="chat-error" role="alert">{memorySaveError}</p>}<div><button type="button" onClick={closeMemoryDialog} disabled={memorySaving}>Cancel</button><button type="submit" disabled={memorySaving || !memoryDraft.text.trim() || memoryDraft.text.trim().length > 2000}>{memorySaving ? 'Saving…' : 'Save note'}</button></div></form></div>}
-  </main>;
+            <ChatComposer
+              composerInput={composerInput}
+              activeProfile={activeProfile}
+              memberName={memberName}
+              conversation={conversation}
+              host={host}
+              database={database}
+              models={models}
+              connections={connections}
+              chosenProvider={chosenProvider}
+              chosenModel={chosenModel}
+              chosenHarnessMode={chosenHarnessMode}
+              draft={draft}
+              onDraftChange={setDraft}
+              selectedFiles={selectedFiles}
+              onSelectedFilesChange={setSelectedFiles}
+              editingQueuedRunId={editingQueuedRunId}
+              onCancelEditQueued={() => { setEditingQueuedRunId(null); setDraft(''); setSelectedFiles([]); }}
+              deliveryMode={deliveryMode}
+              onDeliveryModeChange={setDeliveryMode}
+              chatBusy={chatBusy}
+              canSend={canSend}
+              running={running}
+              queuedCount={queuedCount}
+              hasPendingWork={hasPendingWork}
+              hasDraft={hasDraft}
+              archiveMemberError={archiveMemberError}
+              hasArchiveMemberTarget={!!archiveMemberTarget}
+              chatError={chatError}
+              onChatError={setChatError}
+              onSendMessage={() => void sendMessage()}
+              onStopResponse={() => void stopResponse()}
+              onPromoteQueued={runId => void promoteQueuedMessage(runId)}
+              onEditQueued={(assistantMessage, userMessage) => void editQueuedMessage(assistantMessage, userMessage)}
+              onRemoveQueued={runId => void removeQueuedMessage(runId)}
+              onSelectBackingEngine={(providerId, modelId, harnessMode) => void selectBackingEngine(providerId, modelId, harnessMode)}
+              onSelectModel={modelId => void selectModel(modelId)}
+            />
+          </section>
+        </div>
+        {memberPanel.present && (
+          <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />
+        )}
+        {memberPanel.present && (
+          <CouncilMember
+            config={configuration.current}
+            profileId={activeProfile?.id}
+            memoryRefreshKey={memoryRefreshKey}
+            activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'}
+            closing={memberPanel.closing}
+            identity={identity}
+            resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }}
+            onChange={updateMemberIdentity}
+            onClose={() => setShowMember(false)}
+            storageError={profileErrorForActive || storageError}
+            saving={profileSaving}
+            onRetrySave={() => {
+              if (!activeProfile) return;
+              const profileId = activeProfile.id;
+              setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; });
+              setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 }));
+            }}
+            retryAvailable={profileDirty && !!profileErrorForActive}
+          />
+        )}
+        {toolsPanel.present && (
+          <aside id="session-tools-pane" className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools">
+            <PaneResizeHandle
+              className="right-pane-resizer tools-resizer"
+              label="Resize Session Tools pane"
+              controls="session-tools-pane"
+              value={Math.min(toolsPaneWidth, rightPaneResizeMax)}
+              min={240}
+              max={rightPaneResizeMax}
+              direction={-1}
+              onResize={setToolsPaneWidth}
+            />
+            <div className="pane-header">
+              <span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span>
+              <button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button>
+            </div>
+            <div className="session-tabs" role="group" aria-label="Session tools">
+              {sessionTabs.map(tab => (
+                <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>
+                  {tab.label}<small>{tab.status}</small>
+                </button>
+              ))}
+            </div>
+            {previewTab === 'context' ? (
+              <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading context inspector…</small></section>}>
+                <ContextInspector config={configuration.current} conversationId={conversation?.conversation.id ?? null} refreshToken={(conversation?.conversation.revision ?? 0) + memoryRefreshKey + (running ? 1 : 0)} />
+              </Suspense>
+            ) : (
+              <section key={previewTab} className="session-placeholder">
+                <span className="session-placeholder-icon">
+                  {previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}
+                </span>
+                <span className="eyebrow">{activeSessionPanel.title}</span>
+                <p>{activeSessionPanel.detail}</p>
+                <small>Preview only · This panel does not run commands or connect external services.</small>
+              </section>
+            )}
+          </aside>
+        )}
+      </div>
+      <ConfirmationDialogs
+        chatBusy={chatBusy}
+        chatOperation={chatOperation}
+        memberReturnFocus={memberReturnFocus}
+        deleteMemberTarget={deleteMemberTarget}
+        deleteMemberError={deleteMemberError}
+        onCancelDeleteMember={cancelDeleteMember}
+        onConfirmDeleteMember={profile => void deleteGuildMember(profile)}
+        archiveMemberTarget={archiveMemberTarget}
+        archiveMemberError={archiveMemberError}
+        onCancelArchiveMember={cancelArchiveMember}
+        onConfirmArchiveMember={profile => void setGuildMemberArchived(profile, true)}
+        deleteTarget={deleteTarget}
+        deleteError={deleteError}
+        onCancelDeleteConversation={cancelDeleteConversation}
+        onConfirmDeleteConversation={() => void deleteConversation()}
+        renameTarget={renameTarget}
+        renameDraft={renameDraft}
+        renameError={renameError}
+        onRenameDraftChange={setRenameDraft}
+        onCancelRenameConversation={() => setRenameTarget(null)}
+        onConfirmRenameConversation={() => void renameConversation()}
+        memoryDraft={memoryDraft}
+        memorySaving={memorySaving}
+        memorySaveError={memorySaveError}
+        activeProfile={activeProfile}
+        memberName={memberName}
+        onMemoryDraftChange={setMemoryDraft}
+        onCloseMemoryDialog={closeMemoryDialog}
+        onConfirmSaveMemory={() => void saveMessageToMemory()}
+      />
+    </main>
+  );
 }
-
-
-
-
-
-
-
-
-
-
-
-
