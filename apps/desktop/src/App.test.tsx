@@ -307,7 +307,7 @@ describe('connection status', () => {
     const instructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
     fireEvent.change(instructions, { target: { value: 'Keep this draft after a save conflict' } });
     expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
-    await screen.findByRole('alert');
+    await screen.findByRole('button', { name: 'Retry save' });
     expect(instructions).toHaveValue('Keep this draft after a save conflict');
     expect(attempts).toBe(1);
 
@@ -681,8 +681,10 @@ describe('connection status', () => {
     expect(await submittedFile.text()).toBe('local note');
     expect(await screen.findByRole('button', { name: /notes.txt/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Session tools/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Terminal/ }));
+    expect(screen.getByText(/terminal is planned/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Context usage/ }));
-    expect(screen.getByText(/context usage is planned/i)).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Context usage inspector' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Scheduled tasks — planned' })).toBeDisabled();
   });
   it('recovers after host failure using refresh', async () => {

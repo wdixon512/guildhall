@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import type { Bootstrap } from './api';
 import { Icon } from './Icon';
 import { PaneResizeHandle } from './PaneResizeHandle';
+import { StreamingMarkdown } from './StreamingMarkdown';
+import { TextEditorModal } from './TextEditorModal';
+
+const MemoryNotesPanel = lazy(() =>
+  import('./MemoryNotesPanel').then(module => ({ default: module.MemoryNotesPanel })),
+);
 
 export const accents = [
   { name: 'Plum', value: '#71465f' }, { name: 'Slate', value: '#536078' },
@@ -41,8 +48,23 @@ export function Portrait({ identity, large = false, expression = 'neutral' }: { 
   return <span key={`${identity.portrait}-${expression}-${!!identity.customPortrait}`} className={`portrait ${large ? 'portrait-large' : ''}`} role="img" aria-label={`${identity.name || 'Maren'} portrait${expression !== 'neutral' && !identity.customPortrait ? `, ${expression}` : ''}`} style={style} />;
 }
 
-export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void } }) {
+export function stripMarkdownFrontmatter(markdown: string): string {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  if (!normalized.startsWith('---\n')) return markdown.trim();
+  const closingIndex = normalized.indexOf('\n---\n', 4);
+  if (closingIndex >= 0) return normalized.slice(closingIndex + 5).trim();
+  if (normalized.endsWith('\n---')) return '';
+  return markdown.trim();
+}
+
+export function toInstructionSlug(name: string): string {
+  const slug = name.trim().toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || 'guild-member';
+}
+
+export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0 }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number }) {
   const picker = useRef<HTMLInputElement>(null);
+  const markdownPicker = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLElement>(null);
   const [overlay, setOverlay] = useState(() => window.innerWidth < 1280);
   useEffect(() => {
@@ -60,6 +82,9 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
   }, [overlay]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [instructionsMode, setInstructionsMode] = useState<'edit' | 'preview'>('edit');
+  const [instructionsModalOpen, setInstructionsModalOpen] = useState(false);
+  const [markdownError, setMarkdownError] = useState('');
   const [previewExpression, setPreviewExpression] = useState<PortraitExpression | 'auto'>('auto');
   const uploadVersion = useRef(0);
   const latestIdentity = useRef(identity);
@@ -85,6 +110,37 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
     } catch (cause) { if (version === uploadVersion.current) setError(cause instanceof Error && cause.message === 'portrait_too_large' ? 'The prepared portrait is too large to save. Choose a simpler or smaller image.' : 'This image could not be opened. Try another image.'); }
     finally { URL.revokeObjectURL(url); if (version === uploadVersion.current) setLoading(false); }
   }
+  async function importMarkdown(file?: File) {
+    if (!file) return;
+    if (file.size > 64 * 1024) {
+      setMarkdownError('Choose a Markdown file up to 64 KB.');
+      return;
+    }
+    try {
+      const raw = await file.text();
+      const body = stripMarkdownFrontmatter(raw);
+      if (body.length > 8192) {
+        setMarkdownError(`Imported Markdown must be 8,192 characters or less (found ${body.length}).`);
+        return;
+      }
+      setMarkdownError('');
+      onChange({ ...latestIdentity.current, instructions: body });
+    } catch {
+      setMarkdownError('This Markdown file could not be read.');
+    }
+  }
+  function exportMarkdown() {
+    setMarkdownError('');
+    const blob = new Blob([identity.instructions], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${toInstructionSlug(identity.name)}-instructions.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
   return <aside id="guild-member-pane" ref={panel} className={`member-panel ${closing ? 'panel-closing' : ''}`} role={overlay ? 'dialog' : undefined} aria-modal={overlay ? true : undefined} aria-label="Guild member" onKeyDown={event => {
     if (event.key !== 'Tab' || !overlay) return;
     const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(.sr-only), select, textarea:not(:disabled), [role="separator"][tabindex="0"]');
@@ -103,8 +159,59 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
       {error && <p role="alert" className="profile-error">{error}</p>}
     </section>
     <section className="member-section"><h3>Accent color</h3><div className="accent-options">{accents.map(color => <button key={color.name} style={{ background: color.value }} aria-label={`${color.name} accent`} aria-pressed={identity.accent === color.value} onClick={() => onChange({ ...identity, accent: color.value })} />)}</div></section>
-    <section className="member-section member-instructions"><label htmlFor="member-instructions">Instructions / rules</label><textarea id="member-instructions" maxLength={8192} value={identity.instructions} onChange={event => onChange({ ...identity, instructions: event.target.value })} rows={7} /><small>Markdown text included for this member’s future replies. Changes apply to new messages.</small></section>
+    <section className="member-section member-instructions">
+      <div className="member-instructions-header">
+        {instructionsMode === 'edit' ? (
+          <label htmlFor="member-instructions">Instructions / rules</label>
+        ) : (
+          <span className="member-instructions-label">Instructions / rules</span>
+        )}
+        <div className="member-instructions-tabs" role="group" aria-label="Instructions view">
+          <button type="button" className={instructionsMode === 'edit' ? 'selected' : ''} aria-pressed={instructionsMode === 'edit'} onClick={() => setInstructionsMode('edit')}>Source</button>
+          <button type="button" className={instructionsMode === 'preview' ? 'selected' : ''} aria-pressed={instructionsMode === 'preview'} onClick={() => setInstructionsMode('preview')}>Preview</button>
+        </div>
+      </div>
+      {instructionsMode === 'edit' ? (
+        <textarea id="member-instructions" maxLength={8192} value={identity.instructions} onChange={event => { setMarkdownError(''); onChange({ ...identity, instructions: event.target.value }); }} rows={7} />
+      ) : (
+        <div className="member-instructions-preview markdown-body" role="region" aria-label="Instructions preview">
+          {identity.instructions.trim() ? <StreamingMarkdown text={identity.instructions} streaming={false} /> : <p className="member-instructions-empty">No instructions yet.</p>}
+        </div>
+      )}
+      <div className="member-instructions-actions">
+        <input ref={markdownPicker} type="file" accept=".md,.markdown,text/markdown,text/plain" className="sr-only" aria-label="Import instructions Markdown" onChange={event => { void importMarkdown(event.target.files?.[0]); event.target.value = ''; }} />
+        <button type="button" onClick={() => setInstructionsModalOpen(true)}>Expand</button>
+        <button type="button" onClick={() => markdownPicker.current?.click()}>Import .md…</button>
+        <button type="button" onClick={exportMarkdown} disabled={!identity.instructions}>Export .md</button>
+      </div>
+      <TextEditorModal
+        open={instructionsModalOpen}
+        title={`${identity.name || 'Guild member'} — Instructions / rules`}
+        subtitle="Markdown text included for this member’s future replies."
+        value={identity.instructions}
+        maxLength={8192}
+        saveLabel="Apply"
+        onSave={next => { setMarkdownError(''); onChange({ ...latestIdentity.current, instructions: next }); setInstructionsModalOpen(false); }}
+        onClose={() => setInstructionsModalOpen(false)}
+      />
+      {markdownError && <p role="alert" className="profile-error">{markdownError}</p>}
+      <small>Markdown text included for this member’s future replies. Changes apply to new messages. {identity.instructions.length}/8192</small>
+    </section>
     <section className="member-section expression-preview"><label>Expressions<select aria-label="Preview expression" value={previewExpression} disabled={!!identity.customPortrait} onChange={event => setPreviewExpression(event.target.value as PortraitExpression | 'auto')}><option value="auto">Follow activity</option>{expressions.map(expression => <option key={expression} value={expression}>{expression.charAt(0).toUpperCase() + expression.slice(1)}</option>)}</select></label><small>{identity.customPortrait ? 'Uploaded portraits stay static.' : 'Preview a pose here. Live replies use pondering, then idea as text arrives. Research and other expressions are reserved for future activity signals.'}</small></section>
+    {config && profileId && (
+      <section className="member-section">
+        <Suspense fallback={<small>Loading member memory…</small>}>
+          <MemoryNotesPanel
+            config={config}
+            scope="Member"
+            agentDefinitionId={profileId}
+            refreshKey={memoryRefreshKey}
+            title="Member memory"
+            description="Private notes for this member only, kept across sessions and model switches."
+          />
+        </Suspense>
+      </section>
+    )}
     <p className="member-note">This identity and its instructions belong to this guild member and are shared by its sessions.</p>{saving && <p className="member-note" role="status">Saving guild member…</p>}{storageError && <p role="alert" className="profile-error">{storageError}{retryAvailable && onRetrySave && <> <button className="profile-retry" onClick={onRetrySave}>Retry save</button></>}</p>}
   </aside>;
 }

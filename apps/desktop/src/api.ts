@@ -9,11 +9,32 @@ export interface Discovery {
 }
 export async function bootstrap(): Promise<Bootstrap> { return invoke<Bootstrap>('bootstrap'); }
 
+export class HostRequestError extends Error {
+  code?: string;
+  serverMessage?: string;
+  constructor(code?: string, serverMessage?: string) {
+    super('Host request failed');
+    this.code = code;
+    this.serverMessage = serverMessage;
+  }
+}
+
 export async function request(config: Bootstrap, path: string, signal: AbortSignal, init?: RequestInit): Promise<unknown> {
   const response = await fetch(new URL(path, config.hostUrl), {
     ...init, headers: { Authorization: `Bearer ${config.token}`, ...(init?.headers ?? {}) }, signal, redirect: 'error', cache: 'no-store',
   });
-  if (!response.ok && !(path === '/ready' && response.status === 503)) throw new Error('Host request failed');
+  if (!response.ok && !(path === '/ready' && response.status === 503)) {
+    try {
+      const payload = await response.json() as { code?: unknown; message?: unknown };
+      throw new HostRequestError(
+        typeof payload.code === 'string' ? payload.code : undefined,
+        typeof payload.message === 'string' ? payload.message : undefined,
+      );
+    } catch (reason) {
+      if (reason instanceof HostRequestError) throw reason;
+      throw new HostRequestError();
+    }
+  }
   if (response.status === 204) return null;
   return response.json();
 }
@@ -25,6 +46,13 @@ export async function requestBlob(config: Bootstrap, path: string, signal: Abort
 
 export type AgentProfile = { id: string; name: string; role: string; portraitId: number; customPortrait?: string | null; accent: string; instructions: string; defaultModelId?: string | null; revision: number; isArchived: boolean };
 export type GuildhallBehavior = { instructions: string; revision: number };
+export type MemoryNoteScope = 'AboutYou' | 'Member';
+export type MemoryNote = { id: string; scope: MemoryNoteScope; agentDefinitionId?: string | null; body: string; isEnabled: boolean; sourceConversationId?: string | null; createdUtc: string; updatedUtc: string; revision: number };
+export type RunningModelDescriptor = { name: string; sizeBytes: number; sizeVramBytes: number; expiresAtUtc?: string | null; contextLength?: number | null };
+export type VramResidency = { providerId: string; status: string; useGpu: boolean; keepAliveSeconds: number; models: RunningModelDescriptor[] };
+export type ContextMemoryNoteRef = { id: string; scope: MemoryNoteScope; revision: number; estimatedTokens: number; preview: string };
+export type CrossTurnBudgetSummary = { estimatedSessionTokens: number; maxSessionTokens: number; estimatedNextTurnTokens: number; maxTurnContextTokens: number; completedTurns: number; isOverTurnLimit: boolean; isOverSessionBudget: boolean };
+export type ContextInspectorData = { conversationId: string; agentDefinitionId: string; memberName: string; modelId?: string | null; behaviorRevision: number; behaviorChars: number; globalGuidelinesHash?: string | null; globalGuidelinesChars: number; memberInstructionsChars: number; memoryNotes: ContextMemoryNoteRef[]; retainedHistoryTurns: number; retainedHistoryChars: number; budget: CrossTurnBudgetSummary; vram: VramResidency };
 export type Conversation = { id: string; title: string; selectedModelId?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string; lastResponseUtc?: string | null };
 export type Attachment = { id: string; fileName: string; contentType: string; length: number };
 export type MessageView = { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; modelId?: string; errorCode?: string | null; responseDurationSeconds?: number | null; attachments: Attachment[] };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { request } from './api';
 import type { Bootstrap, GuildhallBehavior } from './api';
+import { TextEditorModal } from './TextEditorModal';
 
 export function GuildhallBehaviorSettings({ config }: { config: Bootstrap | null }) {
   const [saved, setSaved] = useState<GuildhallBehavior | null>(null);
@@ -9,6 +10,7 @@ export function GuildhallBehaviorSettings({ config }: { config: Bootstrap | null
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const dirty = !!saved && draft !== saved.instructions;
 
   async function reload() {
@@ -41,6 +43,16 @@ export function GuildhallBehaviorSettings({ config }: { config: Bootstrap | null
     <textarea id="guildhall-behavior-editor" aria-describedby="guildhall-behavior-help" maxLength={4000} rows={10} value={draft} disabled={loading || !saved} onChange={event => { setDraft(event.target.value); setNotice(''); }} />
     <small id="guildhall-behavior-help">Saved to this Guildhall database. Each accepted reply keeps the version that was current when it was queued. {draft.length}/4000</small>
     {error && <p className="settings-error" role="alert">{error}</p>}{notice && <p className="settings-success" role="status">{notice}</p>}
-    <div className="behavior-actions"><button onClick={() => void reload()} disabled={!config || loading || saving}>{error.includes('changed elsewhere') ? 'Reload latest version' : 'Reload saved version'}</button><button onClick={() => void save()} disabled={!saved || !dirty || !draft.trim() || draft.length > 4000 || loading || saving}>{saving ? 'Saving…' : 'Save behavior'}</button></div>
+    <div className="behavior-actions"><button type="button" onClick={() => setExpanded(true)} disabled={loading || !saved}>Expand</button><button onClick={() => void reload()} disabled={!config || loading || saving}>{error.includes('changed elsewhere') ? 'Reload latest version' : 'Reload saved version'}</button><button onClick={() => void save()} disabled={!saved || !dirty || !draft.trim() || draft.length > 4000 || loading || saving}>{saving ? 'Saving…' : 'Save behavior'}</button></div>
+    <TextEditorModal
+      open={expanded}
+      title="Guildhall behavior instructions"
+      subtitle="Shared guidance for every member’s new replies."
+      value={draft}
+      maxLength={4000}
+      saveLabel="Apply"
+      onSave={next => { setDraft(next); setNotice(''); setExpanded(false); }}
+      onClose={() => setExpanded(false)}
+    />
   </section>;
 }

@@ -30,3 +30,29 @@ it('rejects unsupported portrait files and recovers from malformed saved prefere
   fireEvent.change(screen.getByLabelText('Choose portrait image'), { target: { files: [file] } });
   await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Choose a PNG, JPEG or WebP image'));
 });
+
+it('supports Markdown preview, import with frontmatter stripping, and export', async () => {
+  const createObjectUrl = URL.createObjectURL;
+  const revokeObjectUrl = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:mock-md';
+  URL.revokeObjectURL = () => {};
+  try {
+    render(<Editor />);
+    const file = new File(['---\nname: Maren\n---\n# Steward\n- Stay grounded\n'], 'maren.md', { type: 'text/markdown' });
+    fireEvent.change(screen.getByLabelText('Import instructions Markdown'), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getByLabelText('Instructions / rules')).toHaveValue('# Steward\n- Stay grounded'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(screen.getByLabelText('Instructions preview')).toHaveTextContent('Steward');
+    expect(screen.getByLabelText('Instructions preview')).toHaveTextContent('Stay grounded');
+
+    const tooLong = new File(['x'.repeat(8193)], 'too-long.md', { type: 'text/markdown' });
+    fireEvent.change(screen.getByLabelText('Import instructions Markdown'), { target: { files: [tooLong] } });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('8,192 characters or less'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export .md' }));
+  } finally {
+    URL.createObjectURL = createObjectUrl;
+    URL.revokeObjectURL = revokeObjectUrl;
+  }
+});

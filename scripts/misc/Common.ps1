@@ -340,12 +340,12 @@ function Get-SourceFingerprint {
 }
 
 function Start-OwnedChild {
-    param([string]$Executable, [string[]]$Arguments, [hashtable]$ChildEnvironment, [string]$WorkingDirectory = $RepoRoot)
+    param([string]$Executable, [string[]]$Arguments, [hashtable]$ChildEnvironment, [string]$WorkingDirectory = $RepoRoot, [switch]$ShowWindow)
     $info = [System.Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Executable
     $info.WorkingDirectory = $WorkingDirectory
     $info.UseShellExecute = $false
-    $info.CreateNoWindow = $true
+    $info.CreateNoWindow = -not $ShowWindow
     $info.Environment.Clear()
     foreach ($key in $ChildEnvironment.Keys) { $info.Environment[$key] = [string]$ChildEnvironment[$key] }
     foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }

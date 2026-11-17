@@ -282,6 +282,52 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.ToTable("GuildhallBehaviorSettings", (string)null);
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.MemoryNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AgentDefinitionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<Guid?>("SourceConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgentDefinitionId");
+
+                    b.HasIndex("Scope", "AgentDefinitionId", "IsEnabled", "UpdatedUtc");
+
+                    b.ToTable("MemoryNotes", (string)null);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatAttachment", b =>
                 {
                     b.HasOne("Guildhall.AgentHost.Persistence.ChatMessage", "Message")
@@ -322,6 +368,16 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .HasForeignKey("AgentDefinitionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("AgentDefinition");
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.MemoryNote", b =>
+                {
+                    b.HasOne("Guildhall.AgentHost.Persistence.AgentDefinition", "AgentDefinition")
+                        .WithMany()
+                        .HasForeignKey("AgentDefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade);
 
                     b.Navigation("AgentDefinition");
                 });
