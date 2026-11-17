@@ -44,7 +44,11 @@ export async function requestBlob(config: Bootstrap, path: string, signal: Abort
   return response.blob();
 }
 
-export type AgentProfile = { id: string; name: string; role: string; portraitId: number; customPortrait?: string | null; accent: string; instructions: string; defaultModelId?: string | null; revision: number; isArchived: boolean };
+export type AgentProfile = { id: string; name: string; role: string; portraitId: number; customPortrait?: string | null; accent: string; instructions: string; defaultProviderId?: string; defaultModelId?: string | null; defaultHarnessMode?: string | null; revision: number; isArchived: boolean };
+export type ConnectionStatus = 'Connected' | 'Not connected' | 'Needs sign-in' | 'Unavailable' | 'Planned';
+export type ConnectionModelOption = { id: string; displayName: string; supportsVision: boolean };
+export type ConnectionEntry = { id: string; pillar: string; engineKind: string; displayName: string; authType: string; status: ConnectionStatus; statusDetail?: string | null; keyHint?: string | null; defaultModelId?: string | null; models: ConnectionModelOption[]; canConfigureApiKey: boolean; canProbe: boolean; isPlanned: boolean };
+export type ConnectionsCatalogData = { entries: ConnectionEntry[]; checkedUtc: string };
 export type GuildhallBehavior = { instructions: string; revision: number };
 export type MemoryNoteScope = 'AboutYou' | 'Member';
 export type MemoryNote = { id: string; scope: MemoryNoteScope; agentDefinitionId?: string | null; body: string; isEnabled: boolean; sourceConversationId?: string | null; createdUtc: string; updatedUtc: string; revision: number };
@@ -53,9 +57,9 @@ export type VramResidency = { providerId: string; status: string; useGpu: boolea
 export type ContextMemoryNoteRef = { id: string; scope: MemoryNoteScope; revision: number; estimatedTokens: number; preview: string };
 export type CrossTurnBudgetSummary = { estimatedSessionTokens: number; maxSessionTokens: number; estimatedNextTurnTokens: number; maxTurnContextTokens: number; completedTurns: number; isOverTurnLimit: boolean; isOverSessionBudget: boolean };
 export type ContextInspectorData = { conversationId: string; agentDefinitionId: string; memberName: string; modelId?: string | null; behaviorRevision: number; behaviorChars: number; globalGuidelinesHash?: string | null; globalGuidelinesChars: number; memberInstructionsChars: number; memoryNotes: ContextMemoryNoteRef[]; retainedHistoryTurns: number; retainedHistoryChars: number; budget: CrossTurnBudgetSummary; vram: VramResidency };
-export type Conversation = { id: string; title: string; selectedModelId?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string; lastResponseUtc?: string | null };
+export type Conversation = { id: string; title: string; selectedProviderId?: string | null; selectedModelId?: string | null; selectedHarnessMode?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string; lastResponseUtc?: string | null };
 export type Attachment = { id: string; fileName: string; contentType: string; length: number };
-export type MessageView = { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; modelId?: string; errorCode?: string | null; responseDurationSeconds?: number | null; attachments: Attachment[] };
+export type MessageView = { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; modelId?: string; providerId?: string | null; engineKind?: string | null; inputTokens?: number | null; outputTokens?: number | null; costSource?: string | null; errorCode?: string | null; responseDurationSeconds?: number | null; attachments: Attachment[] };
 export type ConversationDetails = { conversation: Conversation; agent?: AgentProfile; messages: MessageView[] };
 export type RunAcceptedResponse = { runId: string; conversationRevision: number };
 

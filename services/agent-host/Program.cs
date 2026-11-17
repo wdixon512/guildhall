@@ -1,6 +1,9 @@
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Configuration;
 using Guildhall.AgentHost.Persistence;
+using Guildhall.AgentHost.Providers;
+using Guildhall.AgentHost.Providers.Cli;
+using Guildhall.AgentHost.Providers.Cloud;
 using Guildhall.AgentHost.Providers.Ollama;
 using Guildhall.AgentHost.Chat;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +46,20 @@ builder.Services.AddHttpClient<OllamaDiscovery>((services, http) => {
 })
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddHttpClient("ollama-chat", (services, http) => { http.BaseAddress = LocalConfiguration.LoopbackUri(services.GetRequiredService<IConfiguration>()["GUILDHALL_OLLAMA_URL"] ?? "http://127.0.0.1:11434"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("openai-api", http => { http.BaseAddress = new Uri("https://api.openai.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("gemini-api", http => { http.BaseAddress = new Uri("https://generativelanguage.googleapis.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("anthropic-api", http => { http.BaseAddress = new Uri("https://api.anthropic.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
+builder.Services.AddSingleton<EnvironmentScrubber>();
+builder.Services.AddSingleton<ICliProcessRunner, CliProcessRunner>();
+builder.Services.AddSingleton<IBackingEngine, OllamaBackingEngine>();
+builder.Services.AddSingleton<IBackingEngine, OpenAiCloudEngine>();
+builder.Services.AddSingleton<IBackingEngine, GeminiCloudEngine>();
+builder.Services.AddSingleton<IBackingEngine, AnthropicCloudEngine>();
+foreach (var descriptor in CliHarnessDescriptors.All)
+    builder.Services.AddSingleton<IBackingEngine>(sp => new CliHarnessEngine(descriptor, sp.GetRequiredService<ICliProcessRunner>(), sp.GetRequiredService<EnvironmentScrubber>()));
+builder.Services.AddSingleton<IBackingEngineRegistry, BackingEngineRegistry>();
+builder.Services.AddSingleton<ConnectionCatalogService>();
 builder.Services.AddSingleton<ChatRunner>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ChatRunner>());
 var app = builder.Build();
@@ -62,6 +79,7 @@ app.MapGet("/ready", async (IDatabaseReadiness readiness, CancellationToken canc
     return Results.Json(result, statusCode: result.Status == "ready" ? 200 : 503);
 });
 app.MapGet("/models", (OllamaDiscovery discovery, CancellationToken cancellationToken) => discovery.DiscoverAsync(cancellationToken));
+app.MapConnections();
 app.MapChat();
 app.Run();
 

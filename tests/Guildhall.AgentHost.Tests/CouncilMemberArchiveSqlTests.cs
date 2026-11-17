@@ -48,14 +48,11 @@ public sealed class CouncilMemberArchiveSqlTests
                 // The pre-upgrade table deliberately has no IsArchived column.
                 await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.AgentDefinitions (Id, Name, Role, PortraitId, CustomPortrait, Accent, Instructions, DefaultModelId, Revision) VALUES ({memberId}, {"Archive fixture"}, {"Reviewer"}, {2}, {"fixture portrait"}, {"#536078"}, {"# Member rules"}, {"fixture-model"}, {9L})");
                 var now = DateTime.UtcNow;
-                before.Conversations.Add(new Conversation { Id = conversationId, AgentDefinitionId = memberId, Title = "Retained session", SelectedModelId = "session-model", CreatedUtc = now, UpdatedUtc = now, Revision = 4 });
-                var run = new ChatRun { Id = runId, ConversationId = conversationId, TurnNumber = 1, ClientRequestId = "archive-upgrade", RequestFingerprint = "fixture", Status = ChatRunStatus.Completed, StartedUtc = now, UpdatedUtc = now, FinishedUtc = now, Sequence = 3, InstructionsSnapshot = "Original run rules", ModelId = "original-model", SettingsSnapshotJson = "{\"fixture\":true}" };
-                var user = new ChatMessage { Id = messageId, Role = ChatMessageRole.User, Text = "Retain this question — Unicode ✓" };
-                user.Attachments.Add(new ChatAttachment { Id = Guid.NewGuid(), FileName = "fixture.bin", ContentType = "application/octet-stream", Content = attachmentBytes, Length = attachmentBytes.Length });
-                run.Messages.Add(user);
-                run.Messages.Add(new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.Assistant, Text = "Retain this answer" });
-                before.ChatRuns.Add(run);
-                await before.SaveChangesAsync();
+                await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.Conversations (Id, AgentDefinitionId, Title, SelectedModelId, CreatedUtc, UpdatedUtc, IsArchived, ArchivedUtc, Revision) VALUES ({conversationId}, {memberId}, {"Retained session"}, {"session-model"}, {now}, {now}, {false}, {(DateTime?)null}, {4L})");
+                await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.ChatRuns (Id, ConversationId, TurnNumber, ClientRequestId, RequestFingerprint, Status, StartedUtc, UpdatedUtc, FinishedUtc, Sequence, ErrorCode, InstructionsSnapshot, ProviderId, ModelId, SettingsSnapshotJson) VALUES ({runId}, {conversationId}, {1}, {"archive-upgrade"}, {"fixture"}, {"Completed"}, {now}, {now}, {now}, {3L}, {(string?)null}, {"Original run rules"}, {"ollama"}, {"original-model"}, {"{\"fixture\":true}"})");
+                await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.ChatMessages (Id, RunId, Role, Text) VALUES ({messageId}, {runId}, {"User"}, {"Retain this question — Unicode ✓"})");
+                await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.ChatAttachments (Id, MessageId, FileName, ContentType, Length, Content) VALUES ({Guid.NewGuid()}, {messageId}, {"fixture.bin"}, {"application/octet-stream"}, {attachmentBytes.LongLength}, {attachmentBytes})");
+                await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.ChatMessages (Id, RunId, Role, Text) VALUES ({Guid.NewGuid()}, {runId}, {"Assistant"}, {"Retain this answer"})");
                 installationId = (await before.ApplicationMetadata.SingleAsync()).InstallationId;
             }
             Assert.Equal("migration_required", (await readiness.CheckAsync(default)).Reason);
@@ -65,7 +62,7 @@ public sealed class CouncilMemberArchiveSqlTests
             await sql.OpenAsync();
             async Task<string> Snapshot(string table)
             {
-                await using var columns = new SqlCommand("SELECT STRING_AGG(CONVERT(nvarchar(max), QUOTENAME(name)), ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id = OBJECT_ID(@table) AND NOT (@table = 'dbo.AgentDefinitions' AND name = 'IsArchived')", sql);
+                await using var columns = new SqlCommand("SELECT STRING_AGG(CONVERT(nvarchar(max), QUOTENAME(name)), ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id = OBJECT_ID(@table) AND NOT (@table = 'dbo.AgentDefinitions' AND name IN ('IsArchived', 'DefaultProviderId', 'DefaultHarnessMode')) AND NOT (@table = 'dbo.Conversations' AND name IN ('SelectedProviderId', 'SelectedHarnessMode')) AND NOT (@table = 'dbo.ChatRuns' AND name IN ('EngineKind', 'InputTokens', 'OutputTokens', 'EstimatedCostUsd', 'CostSource', 'DurationMs'))", sql);
                 columns.Parameters.AddWithValue("@table", "dbo." + table);
                 var projection = (string)(await columns.ExecuteScalarAsync())!;
                 await using var query = new SqlCommand($"SELECT {projection} FROM dbo.[{table}] ORDER BY Id FOR JSON PATH, INCLUDE_NULL_VALUES", sql);
@@ -78,7 +75,7 @@ public sealed class CouncilMemberArchiveSqlTests
             foreach (var table in tables) snapshots.Add(table, await Snapshot(table));
             await using (var upgrade = new GuildhallDbContext(options))
             {
-                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings", "20261116232856_MemoryNotes" }, await upgrade.Database.GetPendingMigrationsAsync());
+                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings", "20261116232856_MemoryNotes", "20261117002946_Phase2BackingEngines" }, await upgrade.Database.GetPendingMigrationsAsync());
                 await upgrade.Database.MigrateAsync();
                 await upgrade.Database.MigrateAsync();
                 Assert.Empty(await upgrade.Database.GetPendingMigrationsAsync());

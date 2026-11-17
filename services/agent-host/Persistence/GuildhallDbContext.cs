@@ -25,7 +25,9 @@ public sealed class AgentDefinition
     public string Accent { get; set; } = "#71465f";
     public bool IsArchived { get; set; }
     public string Instructions { get; set; } = string.Empty;
+    public string DefaultProviderId { get; set; } = "ollama";
     public string? DefaultModelId { get; set; }
+    public string? DefaultHarnessMode { get; set; }
     public long Revision { get; set; }
 }
 
@@ -34,7 +36,9 @@ public sealed class Conversation
     public Guid Id { get; set; }
     public string Title { get; set; } = "New conversation";
     public Guid AgentDefinitionId { get; set; }
+    public string? SelectedProviderId { get; set; }
     public string? SelectedModelId { get; set; }
+    public string? SelectedHarnessMode { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
     public bool IsArchived { get; set; }
@@ -62,6 +66,12 @@ public sealed class ChatRun
     public string InstructionsSnapshot { get; set; } = string.Empty;
     public string ProviderId { get; set; } = "ollama";
     public string ModelId { get; set; } = string.Empty;
+    public string EngineKind { get; set; } = "local";
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? EstimatedCostUsd { get; set; }
+    public string? CostSource { get; set; }
+    public long? DurationMs { get; set; }
     public string? SettingsSnapshotJson { get; set; }
     public Conversation Conversation { get; set; } = null!;
     public List<ChatMessage> Messages { get; set; } = [];
@@ -128,15 +138,15 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
         modelBuilder.Entity<AgentDefinition>(e => {
             e.ToTable("AgentDefinitions"); e.HasKey(x => x.Id); e.Property(x => x.Name).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(100).IsRequired(); e.Property(x => x.PortraitId).IsRequired(); e.Property(x => x.CustomPortrait).HasColumnType("nvarchar(max)"); e.Property(x => x.Accent).HasMaxLength(7).IsRequired(); e.Property(x => x.IsArchived).HasDefaultValue(false);
-            e.Property(x => x.Instructions).HasMaxLength(8192).IsRequired(); e.Property(x => x.DefaultModelId).HasMaxLength(200); e.Property(x => x.Revision).IsConcurrencyToken();
+            e.Property(x => x.Instructions).HasMaxLength(8192).IsRequired(); e.Property(x => x.DefaultProviderId).HasMaxLength(50).IsRequired().HasDefaultValue("ollama"); e.Property(x => x.DefaultModelId).HasMaxLength(200); e.Property(x => x.DefaultHarnessMode).HasMaxLength(30); e.Property(x => x.Revision).IsConcurrencyToken();
         });
         modelBuilder.Entity<Conversation>(e => {
-            e.ToTable("Conversations"); e.HasKey(x => x.Id); e.Property(x => x.Title).HasMaxLength(200).IsRequired(); e.Property(x => x.SelectedModelId).HasMaxLength(200);
+            e.ToTable("Conversations"); e.HasKey(x => x.Id); e.Property(x => x.Title).HasMaxLength(200).IsRequired(); e.Property(x => x.SelectedProviderId).HasMaxLength(50); e.Property(x => x.SelectedModelId).HasMaxLength(200); e.Property(x => x.SelectedHarnessMode).HasMaxLength(30);
             e.HasIndex(x => new { x.UpdatedUtc, x.Id }); e.HasOne(x => x.AgentDefinition).WithMany().HasForeignKey(x => x.AgentDefinitionId).OnDelete(DeleteBehavior.Restrict); e.Property(x => x.Revision).IsConcurrencyToken();
         });
         modelBuilder.Entity<ChatRun>(e => {
             e.ToTable("ChatRuns"); e.HasKey(x => x.Id); e.Property(x => x.ClientRequestId).HasMaxLength(100).IsRequired(); e.Property(x => x.RequestFingerprint).HasMaxLength(128).IsRequired();
-            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20); e.Property(x => x.ErrorCode).HasMaxLength(80); e.Property(x => x.ProviderId).HasMaxLength(50).IsRequired(); e.Property(x => x.ModelId).HasMaxLength(200).IsRequired(); e.Property(x => x.InstructionsSnapshot).HasMaxLength(8192).IsRequired(); e.Property(x => x.SettingsSnapshotJson).HasMaxLength(4000);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20); e.Property(x => x.ErrorCode).HasMaxLength(80); e.Property(x => x.ProviderId).HasMaxLength(50).IsRequired(); e.Property(x => x.ModelId).HasMaxLength(200).IsRequired(); e.Property(x => x.EngineKind).HasMaxLength(20).IsRequired().HasDefaultValue("local"); e.Property(x => x.EstimatedCostUsd).HasColumnType("decimal(10,6)"); e.Property(x => x.CostSource).HasMaxLength(40); e.Property(x => x.InstructionsSnapshot).HasMaxLength(8192).IsRequired(); e.Property(x => x.SettingsSnapshotJson).HasMaxLength(4000);
             e.HasIndex(x => new { x.ConversationId, x.TurnNumber }).IsUnique(); e.HasIndex(x => new { x.ConversationId, x.ClientRequestId }).IsUnique(); e.HasOne(x => x.Conversation).WithMany(x => x.Runs).HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
         });
         modelBuilder.Entity<ChatMessage>(e => { e.ToTable("ChatMessages"); e.HasKey(x => x.Id); e.Property(x => x.Role).HasConversion<string>().HasMaxLength(20); e.Property(x => x.Text).HasMaxLength(131072).IsRequired(); e.HasIndex(x => new { x.RunId, x.Role }).IsUnique(); e.HasOne(x => x.Run).WithMany(x => x.Messages).HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Cascade); });

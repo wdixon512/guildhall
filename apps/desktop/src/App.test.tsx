@@ -360,7 +360,7 @@ describe('connection status', () => {
     expect(waiting?.querySelectorAll('.waiting-dots')).toHaveLength(6);
     expect(waiting?.querySelector('.waiting-dots')?.textContent).toBe('...');
     await waitFor(() => expect(composer).toBeEnabled());
-    const model = screen.getByRole('combobox', { name: 'Model for this conversation' });
+    const model = screen.getByRole('button', { name: 'Model for this conversation' });
     expect(model).toBeEnabled();
     fireEvent.change(composer, { target: { value: 'A queued follow-up' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -377,8 +377,9 @@ describe('connection status', () => {
     fireEvent.click(within(screen.getByLabelText('Queued messages')).getByRole('button', { name: 'Send queued message 3 now' }));
     await waitFor(() => expect(promotions).toHaveLength(1));
     await waitFor(() => expect(model).toBeEnabled());
-    fireEvent.change(model, { target: { value: 'qwen3-vl:2b' } });
-    await waitFor(() => expect(model).toHaveValue('qwen3-vl:2b'));
+    fireEvent.click(model);
+    fireEvent.click(screen.getByRole('option', { name: /qwen3-vl:2b/i }));
+    await waitFor(() => expect(model).toHaveTextContent('qwen3-vl:2b'));
     fireEvent.change(screen.getByRole('combobox', { name: 'Follow-up delivery' }), { target: { value: 'send_now' } });
     fireEvent.change(composer, { target: { value: 'Do this now instead' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
@@ -402,7 +403,8 @@ describe('connection status', () => {
     expect(within(card).getByText('qwen3:4b')).toBeInTheDocument();
     fireEvent.click(card);
     await screen.findByRole('heading', { name: 'Model label check' });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'qwen3-vl:2b' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Model for this conversation' }));
+    fireEvent.click(screen.getByRole('option', { name: /qwen3-vl:2b/i }));
     await waitFor(() => expect(within(card).getByText('qwen3-vl:2b')).toBeInTheDocument());
   });
 
@@ -416,8 +418,10 @@ describe('connection status', () => {
     });
     render(<App />);
     const composer = screen.getByRole('textbox', { name: 'Message' });
-    await screen.findByRole('option', { name: 'one' });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'one' } });
+    const modelSelect = await screen.findByRole('button', { name: 'Model for a new conversation' });
+    await waitFor(() => expect(modelSelect).toBeEnabled());
+    fireEvent.click(modelSelect);
+    fireEvent.click(await screen.findByRole('option', { name: /one/i }));
     await waitFor(() => expect(composer).toBeEnabled());
     const screenshot = new File(['screenshot bytes'], 'image.png', { type: 'image/png' });
     const clipboardData = { items: [{ kind: 'file', getAsFile: () => screenshot }], files: [screenshot], getData: () => 'Explain this image' };
@@ -486,8 +490,8 @@ describe('connection status', () => {
     });
 
     render(<App />);
-    const model = await screen.findByRole('combobox');
-    await waitFor(() => expect(model).toHaveValue('qwen3:1.7b'));
+    const model = await screen.findByRole('button', { name: 'Model for a new conversation' });
+    await waitFor(() => expect(model).toHaveTextContent('qwen3:1.7b'));
     const composer = screen.getByRole('textbox', { name: 'Message' });
     await waitFor(() => expect(composer).toBeEnabled());
     fireEvent.change(composer, { target: { value: 'Hello from the splash screen.' } });
@@ -603,15 +607,18 @@ describe('connection status', () => {
       return { conversation: metadata(), messages: [] };
     });
     render(<App />);
-    const selector = await screen.findByRole('combobox');
+    const selector = await screen.findByRole('button', { name: 'Model for a new conversation' });
     await waitFor(() => expect(selector).toBeEnabled());
     expect(screen.getByRole('button', { name: 'New session' })).toBeDisabled();
-    fireEvent.change(selector, { target: { value: 'qwen3:4b' } });
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole('option', { name: /qwen3:4b/i }));
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     await waitFor(() => expect(request).toHaveBeenCalledWith(expect.anything(), '/conversations/chat-one', expect.anything()));
-    await waitFor(() => expect(selector).toBeEnabled());
-    fireEvent.change(selector, { target: { value: 'smollm2:135m' } });
-    await waitFor(() => expect(selector).toHaveValue('smollm2:135m'));
+    const sessionSelector = await screen.findByRole('button', { name: 'Model for this conversation' });
+    await waitFor(() => expect(sessionSelector).toBeEnabled());
+    fireEvent.click(sessionSelector);
+    fireEvent.click(screen.getByRole('option', { name: /smollm2:135m/i }));
+    await waitFor(() => expect(sessionSelector).toHaveTextContent('smollm2:135m'));
     expect(savedModel).toBe('smollm2:135m');
   });
   it('shows independent readiness and safely renders local model names', async () => {

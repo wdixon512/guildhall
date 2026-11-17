@@ -36,9 +36,20 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Property<string>("CustomPortrait")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("DefaultHarnessMode")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<string>("DefaultModelId")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("DefaultProviderId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasDefaultValue("ollama");
 
                     b.Property<string>("Instructions")
                         .IsRequired()
@@ -161,12 +172,32 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("CostSource")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EngineKind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("local");
+
                     b.Property<string>("ErrorCode")
                         .HasMaxLength(80)
                         .HasColumnType("nvarchar(80)");
 
+                    b.Property<decimal?>("EstimatedCostUsd")
+                        .HasColumnType("decimal(10,6)");
+
                     b.Property<DateTime?>("FinishedUtc")
                         .HasColumnType("datetime2");
+
+                    b.Property<int?>("InputTokens")
+                        .HasColumnType("int");
 
                     b.Property<string>("InstructionsSnapshot")
                         .IsRequired()
@@ -177,6 +208,9 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<int?>("OutputTokens")
+                        .HasColumnType("int");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
@@ -242,9 +276,17 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
+                    b.Property<string>("SelectedHarnessMode")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<string>("SelectedModelId")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("SelectedProviderId")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("Title")
                         .IsRequired()

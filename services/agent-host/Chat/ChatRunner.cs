@@ -1,14 +1,19 @@
-using System.Net.Http.Json;
-using System.Text.Json;
 using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Guildhall.AgentHost.Persistence;
+using Guildhall.AgentHost.Providers;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace Guildhall.AgentHost.Chat;
 
-public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IHttpClientFactory clients, ILogger<ChatRunner> logger, IConfiguration configuration, Lazy<IContextBuilder> contextBuilder, IOptionsMonitor<CrossTurnBudgetOptions> budgetOptions) : BackgroundService
+public sealed class ChatRunner(
+    IDbContextFactory<GuildhallDbContext> factory,
+    IBackingEngineRegistry engineRegistry,
+    TimeProvider timeProvider,
+    ILogger<ChatRunner> logger,
+    Lazy<IContextBuilder> contextBuilder) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> active = new();
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
@@ -98,18 +103,30 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
     public async Task RunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var answer = string.Empty;
+        var startedAt = timeProvider.GetTimestamp();
+        var engineKind = BackingEngineKinds.Local;
+        BackingEngineUsage? usage = null;
         try
         {
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
-            var run = await db.ChatRuns.Include(x => x.Messages).ThenInclude(x => x.Attachments).SingleAsync(x => x.Id == runId, cancellationToken);
+            var run = await db.ChatRuns
+                .Include(x => x.Conversation)
+                .ThenInclude(x => x.AgentDefinition)
+                .Include(x => x.Messages)
+                .ThenInclude(x => x.Attachments)
+                .SingleAsync(x => x.Id == runId, cancellationToken);
             if (run.Status != ChatRunStatus.Running) return;
             var user = run.Messages.Single(x => x.Role == ChatMessageRole.User);
             Guid? interruptedRunId = null;
+            string? harnessMode = run.Conversation.SelectedHarnessMode ?? run.Conversation.AgentDefinition.DefaultHarnessMode;
+            string? workingDirectory = null;
             var instructions = run.InstructionsSnapshot;
             if (run.SettingsSnapshotJson is { } settings)
             {
                 using var snapshot = JsonDocument.Parse(settings);
                 if (snapshot.RootElement.TryGetProperty("interruptedRunId", out var value) && value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var id)) interruptedRunId = id;
+                if (snapshot.RootElement.TryGetProperty("harnessMode", out var modeEl) && modeEl.ValueKind == JsonValueKind.String) harnessMode = modeEl.GetString();
+                if (snapshot.RootElement.TryGetProperty("workingDirectory", out var dirEl) && dirEl.ValueKind == JsonValueKind.String) workingDirectory = dirEl.GetString();
                 string? behaviorText = snapshot.RootElement.TryGetProperty("guildhallBehavior", out var behavior) && behavior.ValueKind == JsonValueKind.String ? behavior.GetString() : null;
                 string? guidelinesText = snapshot.RootElement.TryGetProperty("globalGuidelines", out var guidelines) && guidelines.ValueKind == JsonValueKind.String ? guidelines.GetString() : null;
                 var memoryNotes = new List<(string Scope, string Body)>();
@@ -131,12 +148,14 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
                 .OrderBy(x => x.TurnNumber)
                 .Select(x => new { x.TurnNumber, Messages = x.Messages.Where(m => x.Status == ChatRunStatus.Completed || m.Role == ChatMessageRole.User).Select(m => new { m.Role, m.Text }).ToList() })
                 .ToListAsync(cancellationToken);
-            var messages = new List<object> { new { role = "system", content = instructions } };
+
+            var engineMessages = new List<BackingEngineMessage>();
             foreach (var prior in priorRuns.OrderBy(x => x.TurnNumber))
             foreach (var message in prior.Messages.OrderBy(x => x.Role == ChatMessageRole.User ? 0 : 1))
-                messages.Add(new { role = message.Role == ChatMessageRole.User ? "user" : "assistant", content = message.Text });
-            var userContent = new System.Text.StringBuilder(user.Text);
-            var imageData = new List<string>();
+                engineMessages.Add(new BackingEngineMessage(message.Role == ChatMessageRole.User ? "user" : "assistant", message.Text, []));
+
+            var userContent = new StringBuilder(user.Text);
+            var engineAttachments = new List<BackingEngineAttachment>();
             var extractedChars = 0;
             foreach (var attachment in user.Attachments)
             {
@@ -147,76 +166,73 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
                     var included = extracted.Length > remaining ? extracted[..remaining] + "\n[File text truncated at 256 KB total.]" : extracted;
                     userContent.AppendLine($"\n\n--- Attached file: {attachment.FileName} ---\n{included}");
                     extractedChars += included.Length;
+                    engineAttachments.Add(new BackingEngineAttachment(attachment.FileName, attachment.ContentType, [], included, IsImage: false));
                 }
                 else if (IsSupportedImage(attachment.Content))
                 {
-                    imageData.Add(Convert.ToBase64String(attachment.Content));
+                    engineAttachments.Add(new BackingEngineAttachment(attachment.FileName, attachment.ContentType, attachment.Content, null, IsImage: true));
                     userContent.AppendLine($"\n[Image attached: {attachment.FileName}]");
                 }
-                else userContent.AppendLine($"\n[Attached file: {attachment.FileName} ({attachment.ContentType}, {attachment.Length} bytes). This provider adapter sends text files and images only; this file's contents were not sent to the model.]");
+                else
+                {
+                    userContent.AppendLine($"\n[Attached file: {attachment.FileName} ({attachment.ContentType}, {attachment.Length} bytes). This provider adapter sends text files and images only; this file's contents were not sent to the model.]");
+                }
             }
-            messages.Add(new { role = "user", content = userContent.ToString(), images = imageData });
-            if (imageData.Count > 0)
-            {
-                using var modelResponse = await clients.CreateClient("ollama-chat").PostAsJsonAsync("/api/show", new { model = run.ModelId }, cancellationToken);
-                modelResponse.EnsureSuccessStatusCode();
-                using var modelDetails = await JsonDocument.ParseAsync(await modelResponse.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
-                if (modelDetails.RootElement.TryGetProperty("capabilities", out var capabilities) &&
-                    !capabilities.EnumerateArray().Any(capability => capability.GetString() == "vision"))
-                    throw new InvalidOperationException("model_does_not_support_images");
-            }
-            var useGpu = configuration.GetValue<bool>("GUILDHALL_USE_GPU");
-            var options = new Dictionary<string, object> { ["num_thread"] = 4, ["num_ctx"] = budgetOptions.CurrentValue.MaxTurnContextTokens };
-            if (!useGpu) options["num_gpu"] = 0;
-            // Request-local settings: do not change the shared Ollama service or other clients.
-            // Omit `think` so thinking-capable models emit `message.thinking` by default while non-thinking models remain compatible.
-            var keepAliveSeconds = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
-            var payload = new { model = run.ModelId, stream = true, messages, options, keep_alive = keepAliveSeconds };
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/chat") { Content = JsonContent.Create(payload) };
-            using var response = await clients.CreateClient("ollama-chat").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var reader = new StreamReader(stream);
-            var completed = false;
-            var inThinking = false;
-            var lastCheckpoint = DateTime.UtcNow;
+            engineMessages.Add(new BackingEngineMessage("user", userContent.ToString(), engineAttachments));
+
+            var engine = engineRegistry.Resolve(run.ProviderId)
+                ?? throw new BackingEngineException("provider_unavailable", $"Provider '{run.ProviderId}' is not registered.");
+            engineKind = engine.EngineKind;
+
+            var engineRequest = new BackingEngineRequest(
+                run.Id,
+                run.ConversationId,
+                run.ProviderId,
+                run.ModelId,
+                harnessMode,
+                instructions,
+                engineMessages,
+                workingDirectory);
+
+            var lastCheckpoint = timeProvider.GetUtcNow().UtcDateTime;
             var checkpointLength = 0;
-            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+
+            await engine.StreamTurnAsync(engineRequest, async (chunk, ct) =>
             {
-                if (line.Length > 256 * 1024) throw new InvalidOperationException("provider_record_too_large");
-                using var json = JsonDocument.Parse(line);
-                if (json.RootElement.TryGetProperty("error", out _)) throw new InvalidOperationException("provider_error");
-                if (json.RootElement.TryGetProperty("message", out var message))
+                if (!string.IsNullOrEmpty(chunk.DeltaText))
                 {
-                    if (message.TryGetProperty("thinking", out var thinkingProp) && thinkingProp.GetString() is { Length: > 0 } thinkingChunk)
+                    answer += chunk.DeltaText;
+                    if (answer.Length > 131072)
+                        throw new BackingEngineException("output_limit", "Assistant output exceeded maximum length.");
+
+                    var now = timeProvider.GetUtcNow().UtcDateTime;
+                    if (answer.Length - checkpointLength >= 1024 || (answer.Length > checkpointLength && now - lastCheckpoint >= TimeSpan.FromMilliseconds(400)))
                     {
-                        if (!inThinking) { answer += "<think>"; inThinking = true; }
-                        answer += thinkingChunk;
-                    }
-                    if (message.TryGetProperty("content", out var contentProp) && contentProp.GetString() is { Length: > 0 } contentChunk)
-                    {
-                        if (inThinking) { answer += "</think>"; inThinking = false; }
-                        answer += contentChunk;
+                        await SaveCheckpointAsync(runId, answer, ct);
+                        checkpointLength = answer.Length;
+                        lastCheckpoint = now;
                     }
                 }
-                if (answer.Length > 131072) throw new InvalidOperationException("output_limit");
-                if (answer.Length - checkpointLength >= 1024 || (answer.Length > checkpointLength && DateTime.UtcNow - lastCheckpoint >= TimeSpan.FromMilliseconds(400)))
-                {
-                    await SaveCheckpointAsync(runId, answer, cancellationToken);
-                    checkpointLength = answer.Length;
-                    lastCheckpoint = DateTime.UtcNow;
-                }
-                if (json.RootElement.TryGetProperty("done", out var done) && done.GetBoolean()) { completed = true; break; }
-            }
-            if (inThinking) answer += "</think>";
-            if (!completed) throw new InvalidOperationException("invalid_provider_response");
-            await FinishAsync(runId, answer, ChatRunStatus.Completed, null);
+
+                if (chunk.Usage is not null)
+                    usage = chunk.Usage;
+            }, cancellationToken);
+
+            var elapsedMs = (long)timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
+            await FinishAsync(runId, answer, ChatRunStatus.Completed, null, engineKind, usage, elapsedMs);
         }
         catch (Exception ex)
         {
-            var code = hostStopping.IsCancellationRequested ? "host_stopped" : ex is OperationCanceledException ? "generation_timeout" : ex is InvalidOperationException { Message: "model_does_not_support_images" } ? "model_does_not_support_images" : "provider_error";
+            var elapsedMs = (long)timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
+            var code = hostStopping.IsCancellationRequested
+                ? "host_stopped"
+                : ex is OperationCanceledException
+                    ? "generation_timeout"
+                    : ex is BackingEngineException bee
+                        ? bee.ErrorCode
+                        : "provider_error";
             logger.LogWarning("Chat run {RunId} failed with {Code}", runId, code);
-            try { await FinishAsync(runId, answer, hostStopping.IsCancellationRequested ? ChatRunStatus.Interrupted : ChatRunStatus.Failed, code); }
+            try { await FinishAsync(runId, answer, hostStopping.IsCancellationRequested ? ChatRunStatus.Interrupted : ChatRunStatus.Failed, code, engineKind, usage, elapsedMs); }
             catch { logger.LogWarning("Could not persist terminal state for chat run {RunId}", runId); }
         }
     }
@@ -253,16 +269,29 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
          System.Text.Encoding.ASCII.GetString(content, 0, 4) == "RIFF" && System.Text.Encoding.ASCII.GetString(content, 8, 4) == "WEBP" ||
          System.Text.Encoding.ASCII.GetString(content, 0, 3) == "GIF");
 
-    private async Task FinishAsync(Guid id, string text, ChatRunStatus outcome, string? code)
+    private async Task FinishAsync(
+        Guid id,
+        string text,
+        ChatRunStatus outcome,
+        string? code,
+        string engineKind,
+        BackingEngineUsage? usage,
+        long durationMs)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await using var db = await factory.CreateDbContextAsync(deadline.Token);
         await using var transaction = await db.Database.BeginTransactionAsync(deadline.Token);
-        var now = DateTime.UtcNow;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
         var changed = await db.ChatRuns.Where(x => x.Id == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling))
             .ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.Status, x => x.Status == ChatRunStatus.Cancelling ? ChatRunStatus.Cancelled : outcome)
                 .SetProperty(x => x.ErrorCode, x => x.Status == ChatRunStatus.Cancelling ? "cancelled" : code)
+                .SetProperty(x => x.EngineKind, engineKind)
+                .SetProperty(x => x.InputTokens, usage != null ? usage.InputTokens : null)
+                .SetProperty(x => x.OutputTokens, usage != null ? usage.OutputTokens : null)
+                .SetProperty(x => x.EstimatedCostUsd, usage != null ? usage.EstimatedCostUsd : null)
+                .SetProperty(x => x.CostSource, usage != null ? usage.CostSource : null)
+                .SetProperty(x => x.DurationMs, durationMs)
                 .SetProperty(x => x.Sequence, x => x.Sequence + 1)
                 .SetProperty(x => x.UpdatedUtc, now).SetProperty(x => x.FinishedUtc, now), deadline.Token);
         if (changed > 0)

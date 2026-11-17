@@ -15,7 +15,7 @@ export function toSafeExternalUrl(href?: string): string | null {
   }
 }
 
-async function openExternalLink(url: string) {
+export async function openExternalLink(url: string) {
   if ('__TAURI_INTERNALS__' in window) {
     try { await invoke('open_external_url', { url }); }
     catch { /* Host rejection or spawn failure is ignored to keep transcript safe. */ }

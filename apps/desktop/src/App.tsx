@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { bootstrap, HostRequestError, parseDiscovery, parseReadiness, request, requestBlob } from './api';
-import type { AgentProfile, Bootstrap, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
+import type { AgentProfile, Bootstrap, ConnectionsCatalogData, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
 import { MessageAttachment } from './MessageAttachment';
 import { StreamingMarkdown } from './StreamingMarkdown';
 import { AssistantResponse } from './AssistantResponse';
@@ -16,14 +16,19 @@ const MemoryNotesPanel = lazy(() =>
 const ContextInspector = lazy(() =>
   import('./ContextInspector').then(module => ({ default: module.ContextInspector }))
 );
+const ConnectionsCatalog = lazy(() =>
+  import('./ConnectionsCatalog').then(module => ({ default: module.ConnectionsCatalog }))
+);
 
 import { Icon } from './Icon';
+import { DropUpSelect } from './DropUpSelect';
+import type { DropUpOption } from './DropUpSelect';
 import { PaneResizeHandle } from './PaneResizeHandle';
 import { usePanelPresence } from './usePanelPresence';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import { CouncilMember, Portrait, useMemberIdentity } from './CouncilMember';
 import type { MemberIdentity } from './CouncilMember';
-import { formatAttachmentSize, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
+import { formatAttachmentSize, groupModelsByEffort, isUnread, markConversationRead, queuedPairs, readWatermarks, starterSuggestions, waitingMessages } from './chatPresentation';
 import type { CSSProperties } from 'react';
 import './style.css';
 
@@ -36,7 +41,6 @@ const sessionTabs = [
   { id: 'side-chat', label: 'Side chat', status: 'Planned' },
   { id: 'automations', label: 'Scheduled tasks', status: 'Disabled' },
 ] as const;
-const futureConnections = ['Claude', 'Cursor', 'ChatGPT / OpenAI', 'GitHub', 'Google Drive', 'Gmail'];
 const toMemberIdentity = (profile: AgentProfile): MemberIdentity => ({ name: profile.name, role: profile.role, portrait: profile.portraitId, customPortrait: profile.customPortrait ?? '', accent: profile.accent, instructions: profile.instructions });
 const profileMatchesIdentity = (profile: AgentProfile, identity: MemberIdentity) => identity.name === profile.name && identity.role === profile.role && identity.portrait === profile.portraitId && identity.customPortrait === (profile.customPortrait ?? '') && identity.accent === profile.accent && identity.instructions === profile.instructions;
 const sameIdentity = (left: MemberIdentity, right: MemberIdentity) => left.name === right.name && left.role === right.role && left.portrait === right.portrait && left.customPortrait === right.customPortrait && left.accent === right.accent && left.instructions === right.instructions;
@@ -80,11 +84,15 @@ export default function App() {
   const [host, setHost] = useState('Checking host…');
   const [database, setDatabase] = useState<Readiness | null>(null);
   const [models, setModels] = useState<Discovery | null>(null);
+  const [connections, setConnections] = useState<ConnectionsCatalogData | null>(null);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [databaseError, setDatabaseError] = useState(false);
   const [modelError, setModelError] = useState(false);
   const [conversation, setConversation] = useState<ConversationDetails | null>(null);
+  const [chosenProvider, setChosenProvider] = useState('ollama');
   const [chosenModel, setChosenModel] = useState('');
+  const [chosenHarnessMode, setChosenHarnessMode] = useState('read_only');
   const [chatBusy, setChatBusy] = useState(false);
   const chatOperation = useRef(false);
   const running = conversation?.messages.some(message => ['Running', 'Cancelling'].includes(message.status)) ?? false;
@@ -173,7 +181,7 @@ export default function App() {
     : Math.max(240, Math.min(900, viewportWidth - railWidth - effectiveCouncilWidth - 420));
   const memberPanel = usePanelPresence(showMember);
   const toolsPanel = usePanelPresence(showPreview);
-  const [previewTab, setPreviewTab] = useState<typeof sessionTabs[number]['id']>('git');
+  const [previewTab, setPreviewTab] = useState<typeof sessionTabs[number]['id']>('context');
   const configuration = useRef<Bootstrap | null>(null);
   const profileMutation = useRef(false);
   const pending = useRef<AbortController | null>(null);
@@ -234,6 +242,10 @@ export default function App() {
             }
           }
         }).catch(() => { if (pending.current === controller) setModelError(true); }),
+        request(config, '/connections', controller.signal).then(value => {
+          if (pending.current === controller && value && typeof value === 'object' && 'entries' in value && Array.isArray((value as ConnectionsCatalogData).entries))
+            setConnections(value as ConnectionsCatalogData);
+        }).catch(() => { /* Optional in older test stubs */ }),
       ]);
     } catch {
       if (pending.current === controller) setHost('Disconnected — check the development launcher, then refresh.');
@@ -533,7 +545,7 @@ export default function App() {
     try {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
       switchComposerContext(id, details.agent?.id ?? activeAgentId);
-      setConversation(details); setChosenModel(details.conversation.selectedModelId ?? '');
+      setConversation(details); setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama'); setChosenModel(details.conversation.selectedModelId ?? ''); setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
       markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       setConversationMenu(null);
@@ -718,33 +730,72 @@ export default function App() {
     try {
       const list = createNew ? [] : await request(configuration.current, '/conversations?limit=1', new AbortController().signal) as Conversation[];
       if (!list.length && (!selectedProfile || selectedProfile.isArchived)) { setChatError('Choose or restore an active guild member before starting a new session.'); return; }
-      const item = list[0] ?? await request(configuration.current, '/conversations', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New conversation', modelId: selectedProfile?.defaultModelId || chosenModel || null, agentDefinitionId }) }) as Conversation;
+      const item = list[0] ?? await request(configuration.current, '/conversations', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New conversation', providerId: selectedProfile?.defaultProviderId || chosenProvider || 'ollama', modelId: selectedProfile?.defaultModelId || chosenModel || null, harnessMode: selectedProfile?.defaultHarnessMode || chosenHarnessMode || null, agentDefinitionId }) }) as Conversation;
       const details = await request(configuration.current, `/conversations/${item.id}`, new AbortController().signal) as ConversationDetails;
       switchComposerContext(details.conversation.id, details.agent?.id ?? agentDefinitionId);
       setConversation(details);
+      setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama');
       setChosenModel(details.conversation.selectedModelId ?? '');
+      setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
        if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       if (window.innerWidth < 900) setSidebarCollapsed(true);
     } catch { setChatError('Could not open chat. Check the host and database, then try again.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
-  async function selectModel(modelId: string) {
+  async function probeAllConnections() {
+    if (!configuration.current || connectionsLoading) return;
+    setConnectionsLoading(true);
+    try {
+      const result = await request(configuration.current, '/connections?probe=true', new AbortController().signal) as ConnectionsCatalogData;
+      setConnections(result);
+    } catch { /* Keep existing connection state */ }
+    finally { setConnectionsLoading(false); }
+  }
+
+  async function selectBackingEngine(providerId: string, modelId: string, harnessMode?: string) {
     if (chatOperation.current) return;
-    if (!conversation || !configuration.current) { setChosenModel(modelId); return; }
+    if (!conversation || !configuration.current) {
+      setChosenProvider(providerId);
+      setChosenModel(modelId);
+      if (harnessMode !== undefined) setChosenHarnessMode(harnessMode);
+      return;
+    }
     chatOperation.current = true; setChatBusy(true); setChatError('');
     try {
-      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId, expectedRevision: conversation.conversation.revision }) }) as Conversation;
-      setConversation({ ...conversation, conversation: updated }); setChosenModel(updated.selectedModelId ?? '');
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId,
+          modelId,
+          harnessMode: harnessMode ?? chosenHarnessMode,
+          expectedRevision: conversation.conversation.revision,
+        }),
+      }) as Conversation;
+      setConversation({ ...conversation, conversation: updated });
+      setChosenProvider(updated.selectedProviderId ?? providerId);
+      setChosenModel(updated.selectedModelId ?? modelId);
+      if (updated.selectedHarnessMode) setChosenHarnessMode(updated.selectedHarnessMode);
       setHistory(items => items.map(item => item.id === updated.id ? updated : item));
-    } catch { setChatError('Model change was not saved. Reopen chat to refresh its settings.'); }
+    } catch { setChatError('Engine change was not saved. Reopen chat to refresh its settings.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
+
+  async function selectModel(modelId: string) {
+    await selectBackingEngine(chosenProvider, modelId);
+  }
+
   async function sendMessage() {
     if (!conversation && (!activeProfile || activeProfile.isArchived)) return;
     if (activeProfile && profileHasPendingChanges(activeProfile.id)) { setChatError('This member is still saving. Wait for the save to finish before sending.'); return; }
     if (queuedCount >= 8 && !editingQueuedRunId) { setChatError('Eight messages are already queued. Remove one or wait for a reply.'); return; }
+    const providerId = conversation?.conversation.selectedProviderId ?? chosenProvider ?? 'ollama';
     const modelId = conversation?.conversation.selectedModelId ?? chosenModel;
-    if (!configuration.current || database?.status !== 'ready' || (!draft.trim() && selectedFiles.length === 0) || chatOperation.current || !modelId || !models?.models.some(model => model.id === modelId)) return;
+    const isOllama = providerId === 'ollama';
+    const ollamaReady = isOllama && !!models?.models.some(model => model.id === modelId);
+    const engineEntry = connections?.entries.find(entry => entry.id === providerId);
+    const externalReady = !isOllama && (engineEntry ? engineEntry.status === 'Connected' : !!modelId);
+    if (!configuration.current || database?.status !== 'ready' || (!draft.trim() && selectedFiles.length === 0) || chatOperation.current || !modelId || (!ollamaReady && !externalReady)) return;
     chatOperation.current = true; setChatBusy(true);
     scrolling.pinToBottom();
     const text = draft; let replacedRunCancelled = false; setDraft(''); setChatError('');
@@ -993,13 +1044,20 @@ export default function App() {
       <article><h3>Agent host</h3><p>{host}</p><small>Authenticated connection on this computer</small></article>
       <article><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
       <article><h3>Local models</h3><p>{modelLabel}</p>{models?.status === 'available' && <ul>{models.models.map(model => <li key={model.id}>{model.displayName}</li>)}</ul>}<small>Discovered through the agent host</small></article>
-    </section><section className="connection-catalog" aria-label="Provider connections preview"><div><h3>Provider connections</h3><small>Planned providers · sign-in is not connected</small></div><div className="provider-grid">{futureConnections.map(name => <article key={name}><span>{name}</span><button disabled title={`${name} connection is not implemented yet`}>Planned</button></article>)}</div></section></aside>}
-    {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading behavior settings…</small></section>}><GuildhallBehaviorSettings config={configuration.current} /></Suspense><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading shared memory…</small></section>}><section className="settings-section"><MemoryNotesPanel config={configuration.current} scope="AboutYou" refreshKey={memoryRefreshKey} title="About you" description="Shared facts and preferences available to every guild member." /></section></Suspense><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>No provider usage data is connected.</small></div><p>Local model usage and provider-reported costs will appear here when available. Guildhall will label estimates and will not invent spending totals.</p></section></aside>}
+    </section><Suspense fallback={<section className="connection-catalog" aria-busy="true"><small>Loading connections catalog…</small></section>}><ConnectionsCatalog config={configuration.current} catalog={connections} loading={connectionsLoading} onCatalogUpdated={setConnections} onProbeAll={() => void probeAllConnections()} /></Suspense></aside>}
+    {showSettings && <aside className="settings-panel" aria-label="Workspace settings"><div className="toolbar"><div><h2>Workspace settings</h2><small>Preferences are stored on this computer.</small></div><button aria-label="Close workspace settings" onClick={() => setShowSettings(false)}>×</button></div><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading behavior settings…</small></section>}><GuildhallBehaviorSettings config={configuration.current} /></Suspense><Suspense fallback={<section className="settings-section" aria-busy="true"><small>Loading shared memory…</small></section>}><section className="settings-section"><MemoryNotesPanel config={configuration.current} scope="AboutYou" refreshKey={memoryRefreshKey} title="About you" description="Shared facts and preferences available to every guild member." /></section></Suspense><section className="settings-section"><div><h3>Appearance</h3><small>Display scale: {Math.round(uiScale * 100)}%</small></div><input aria-label="Display scale" type="range" min="80" max="150" step="5" value={Math.round(uiScale * 100)} onChange={event => setUiScale(Number(event.target.value) / 100)} /><div className="settings-choice-row"><span>Theme</span><button aria-pressed="true">Dark</button><button disabled title="Additional themes are planned">Light · planned</button><button disabled title="Additional themes are planned">System · planned</button></div><small>Keyboard: Ctrl/Cmd + or − to scale; Ctrl/Cmd 0 to reset.</small></section><section className="settings-section"><div><h3>Agent access</h3><small>Execution policy · planned for project tools</small></div><div className="planned-policy" aria-label="Planned agent access modes"><button disabled>Always ask</button><button disabled>Ask for unsafe actions</button><button disabled>Unrestricted · danger</button></div><small>These modes will be enforced by the local host when tool access is implemented.</small></section><section className="settings-section"><div><h3>Usage &amp; spending</h3><small>{(conversation?.messages ?? []).some(m => m.role === 'assistant' && m.status === 'Completed' && (m.inputTokens != null || m.outputTokens != null)) ? 'Active session measured usage' : 'No provider usage data is connected.'}</small></div>{(() => {
+      const assistantTurns = (conversation?.messages ?? []).filter(m => m.role === 'assistant' && m.status === 'Completed');
+      const totalIn = assistantTurns.reduce((sum, m) => sum + (m.inputTokens ?? 0), 0);
+      const totalOut = assistantTurns.reduce((sum, m) => sum + (m.outputTokens ?? 0), 0);
+      const hasMeasured = assistantTurns.some(m => m.inputTokens != null || m.outputTokens != null);
+      if (!hasMeasured) return <p>No measured token usage recorded yet in this session. Guildhall reports measured provider tokens and will never fabricate spending totals.</p>;
+      return <p>Measured tokens in this session: {totalIn.toLocaleString()} input · {totalOut.toLocaleString()} output ({assistantTurns.length} completed turn{assistantTurns.length === 1 ? '' : 's'}). Subscription CLI and local Ollama turns are not billed per token.</p>;
+    })()}</section></aside>}
     <section className="chat" aria-label="Local chat">
       <div className="pane-header"><span className="pane-icon"><Icon name="chat" size={17} /></span><h2>{conversation?.conversation.title || 'A new conversation'}</h2><span className="lane-label">Saved locally</span><div className="chat-actions"><button onClick={() => { setShowMember(false); if (!showPreview && window.innerWidth < 900) setSidebarCollapsed(true); setShowPreview(!showPreview); }} aria-pressed={showPreview} title="Toggle session tools"><Icon name="panel" size={16} /><span>Session tools</span></button></div></div>
       <div className="messages" ref={transcript} tabIndex={0} aria-label="Messages" onScroll={scrolling.onScroll} onWheel={scrolling.onWheel} onKeyDown={scrolling.onKeyDown}><div className="transcript-content" ref={scrolling.content}>
         {!conversation?.messages.length && !activeProfile?.isArchived && <div className="chat-welcome"><span className="welcome-symbol"><Icon name="gate" size={52} /></span><span className="eyebrow">YOUR SEAT AT THE TABLE</span><h1>What shall we work on?</h1><p>Bring an idea. We’ll find a way forward.<br />Everything stays in your workspace.</p><div className="welcome-cards">{starterSuggestions(activeProfile).map(suggestion => <button key={suggestion} type="button" onClick={() => { setDraft(suggestion); composerInput.current?.focus(); }}>{suggestion}</button>)}</div></div>}
-        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? message.role === 'assistant' ? <AssistantResponse text={message.text} streaming={message.status === 'Running'} durationSeconds={message.status === 'Completed' ? message.responseDurationSeconds : null} /> : <StreamingMarkdown text={message.text} streaming={false} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}<span className="waiting-dots"><span>.</span><span>.</span><span>.</span></span></span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Ollama and the selected model; image attachments require a vision-capable model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.role === 'assistant' ? splitThinking(message.text).answer : message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button>{database?.status === 'ready' && <button type="button" className="save-memory-button" aria-label="Save to memory" title="Save to memory" onClick={event => { memoryReturnFocus.current = event.currentTarget; const raw = message.role === 'assistant' ? splitThinking(message.text).answer : message.text; setMemorySaveError(''); setMemoryDraft({ text: raw.slice(0, 2000), scope: activeProfile ? 'Member' : 'AboutYou' }); }}>Save to memory</button>}<span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
+        {conversation && [...conversation.messages].sort((a, b) => a.turnNumber - b.turnNumber || (a.role === 'user' ? 0 : 1) - (b.role === 'user' ? 0 : 1)).filter(message => !(queuedTurns.has(message.turnNumber) && (message.role === 'user' || message.status === 'Queued'))).map(message => <article key={message.id} className={`message ${message.role}`}>{message.role === 'assistant' ? <div className="message-identity"><Portrait identity={identity} expression={message.status === 'Running' ? message.text ? 'idea' : 'pondering' : 'neutral'} /><div><strong>{memberName}</strong><span>{identity.role.trim() || 'Steward'}{message.modelId ? ` · ${message.modelId}` : ''}</span></div></div> : <span className="sr-only">You</span>}<div className="message-surface"><div className="markdown-body">{message.text ? message.role === 'assistant' ? <AssistantResponse text={message.text} streaming={message.status === 'Running'} durationSeconds={message.status === 'Completed' ? message.responseDurationSeconds : null} /> : <StreamingMarkdown text={message.text} streaming={false} /> : <p>{message.status === 'Queued' ? 'Queued — waiting for a turn.' : message.status === 'Running' ? <span className="waiting-label">{waitingMessages(memberName, message.modelId).map((status, index) => <span key={index} aria-hidden="true">{status}<span className="waiting-dots"><span>.</span><span>.</span><span>.</span></span></span>)}<span className="sr-only">Waiting for the first response text from {message.modelId || 'the model'}.</span></span> : message.errorCode === 'model_does_not_support_images' ? 'This model cannot read images. Choose a vision-capable model and send the image again.' : message.errorCode === 'cli_not_installed' ? 'This CLI harness was not found on PATH. Open Connections to install it.' : message.errorCode === 'cli_needs_signin' ? 'This CLI harness requires sign-in in your terminal before it can run.' : message.errorCode === 'cli_permission_denied' ? 'This CLI harness tried to run a tool or command that requires interactive approval (coming in Phases 3–4). Attach files directly in the composer or ask without tool/shell execution.' : message.errorCode === 'provider_auth_failed' ? 'Provider rejected the configured API key. Check Connections.' : message.errorCode === 'provider_rate_limited' ? 'Provider rate limit exceeded. Wait a moment and try again.' : message.errorCode === 'provider_unavailable' ? 'Backing engine is unavailable. Check Connections and try again.' : message.errorCode === 'generation_timeout' ? 'The reply timed out before finishing.' : message.status === 'Failed' ? 'The reply failed before any text was received. Check Connections and the selected model.' : message.errorCode === 'queue_cancelled' ? 'Queued message removed.' : message.status === 'Cancelled' ? 'Response stopped before any text arrived.' : message.status === 'Interrupted' ? 'Response interrupted before any text arrived. Send a new message to continue.' : 'The model returned no reply text.'}</p>}</div>{!!message.attachments?.length && <div className="message-attachments">{message.attachments.map(file => <MessageAttachment key={file.id} attachment={file} config={configuration.current} />)}</div>}</div>{message.role === 'assistant' && message.status !== 'Completed' && message.status !== 'Running' && message.status !== 'Queued' && <span className="run-label">{message.status}</span>}{!!message.text && <div className="message-tools"><button aria-label={`Copy ${message.role === 'user' ? 'your message' : 'assistant response'}`} onClick={() => void copyMessage(message.id, message.role === 'assistant' ? splitThinking(message.text).answer : message.text)}>{copiedMessageId === message.id ? <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m5 12 4 4L19 6" /></svg> : <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}</button>{database?.status === 'ready' && <button type="button" className="save-memory-button" aria-label="Save to memory" title="Save to memory" onClick={event => { memoryReturnFocus.current = event.currentTarget; const raw = message.role === 'assistant' ? splitThinking(message.text).answer : message.text; setMemorySaveError(''); setMemoryDraft({ text: raw.slice(0, 2000), scope: activeProfile ? 'Member' : 'AboutYou' }); }}>Save to memory</button>}<span className="sr-only" role="status">{copiedMessageId === message.id ? 'Copied to clipboard' : ''}</span></div>}</article>)}
       </div></div>
       <div className="composer-region">{activeProfile?.isArchived && <p className="archived-member-notice">Archived member · Saved sessions are kept. Restore the member to start a new session.</p>}{archiveMemberError && !archiveMemberTarget && <p className="chat-error" role="alert">{archiveMemberError}</p>}{chatError && <p className="chat-error" role="alert">{chatError}</p>}
       {!!queuedMessages.length && <section className="queue-panel" aria-label="Queued messages"><h3>{queuedMessages.length} queued</h3>{queuedMessages.map(message => {
@@ -1007,15 +1065,94 @@ export default function App() {
         return <div className="queue-item" key={message.id}><span className="queue-snippet">{userMessage?.text || (userMessage?.attachments?.length ? `${userMessage.attachments.length} attachment${userMessage.attachments.length === 1 ? '' : 's'}` : 'Attachment message')}</span>{!!userMessage?.attachments?.length && <span className="queue-file-count">{userMessage.attachments.length} {userMessage.attachments.length === 1 ? 'file' : 'files'}</span>}<div className="queue-actions"><button type="button" aria-label={`Send queued message ${message.turnNumber} now`} title="Send now" disabled={chatBusy} onClick={() => void promoteQueuedMessage(message.runId)}><Icon name="send" size={17} /></button><button type="button" aria-label={`Edit queued message ${message.turnNumber}`} title={hasDraft ? 'Clear your draft before editing a queued message' : 'Edit'} disabled={chatBusy || hasDraft} onClick={() => void editQueuedMessage(message, userMessage)}><Icon name="edit" size={17} /></button><button type="button" aria-label={`Remove queued message ${message.turnNumber}`} title="Delete" disabled={chatBusy} onClick={() => void removeQueuedMessage(message.runId)}><Icon name="trash" size={17} /></button></div></div>;
       })}</section>}
       {editingQueuedRunId && <div className="queue-editing" role="status">Editing queued message <button type="button" onClick={() => { setEditingQueuedRunId(null); setDraft(''); setSelectedFiles([]); }}>Cancel edit</button></div>}
-      <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {formatAttachmentSize(file.size)}</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}{editingQueuedRunId && <span className="queue-editing-label">Editing queued message · Send to replace it</span>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a local model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || !models || models.status !== 'available' || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
+      <div className="composer">{selectedFiles.length > 0 && <div className="pending-attachments" aria-label="Attachments to send">{selectedFiles.map((file, index) => <span key={`${file.name}-${index}`}><AttachmentThumbnail file={file} /><span>▤ {file.name} · {formatAttachmentSize(file.size)}</span><button aria-label={`Remove ${file.name}`} disabled={chatBusy} onClick={() => setSelectedFiles(items => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}{editingQueuedRunId && <span className="queue-editing-label">Editing queued message · Send to replace it</span>}<textarea ref={composerInput} aria-label="Message" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} onPaste={pasteIntoComposer} placeholder={chosenModel ? `Message ${memberName}…` : 'Choose a backing engine & model to start…'} disabled={host !== 'Connected' || database?.status !== 'ready' || (chosenProvider === 'ollama' && (!models || models.status !== 'available')) || (!conversation && (!chosenModel || !activeProfile || activeProfile.isArchived))} rows={1} />
       <input ref={filePicker} className="sr-only" type="file" multiple aria-label="Choose attachments" onChange={event => { addAttachments(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ''; }} />
-      <div className="composer-toolbar"><button className="attach-button" aria-label="Add attachments" title="Add files (up to 20 MB each)" onClick={() => filePicker.current?.click()} disabled={chatBusy || database?.status !== 'ready'}><Icon name="attach" size={22} /></button><label className="model-control"><span className="sr-only">Model for {conversation ? 'this conversation' : 'a new conversation'}</span>
-        <select value={chosenModel} onChange={event => void selectModel(event.target.value)} disabled={chatBusy || models?.status !== 'available'}>
-          <option value="" disabled>Choose a local model</option>
-          {chosenModel && !models?.models.some(model => model.id === chosenModel) && <option value={chosenModel} disabled>{chosenModel} (unavailable)</option>}
-          {models?.models.map(model => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-        </select>
-      </label><span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
+      <div className="composer-toolbar"><button className="attach-button" aria-label="Add attachments" title="Add files (up to 20 MB each)" onClick={() => filePicker.current?.click()} disabled={chatBusy || database?.status !== 'ready'}><Icon name="attach" size={22} /></button>{connections && (() => {
+        const activeEngines = connections.entries.filter(e => !e.isPlanned);
+        const connected = activeEngines.filter(e => e.status === 'Connected');
+        const disconnected = activeEngines.filter(e => e.status !== 'Connected');
+        const kindTag = (kind: string) => kind === 'local' ? 'Local' : kind === 'cloud_api' ? 'API' : 'CLI';
+        const engineOptions: DropUpOption[] = [
+          ...connected.map(entry => ({
+            value: entry.id,
+            label: `${kindTag(entry.engineKind)} · ${entry.displayName}`,
+            group: 'Connected',
+          })),
+          ...disconnected.map(entry => ({
+            value: entry.id,
+            label: `${kindTag(entry.engineKind)} · ${entry.displayName} (${entry.status.toLowerCase()})`,
+            group: 'Not connected',
+            disabled: true,
+          })),
+        ];
+        return (
+          <DropUpSelect
+            ariaLabel="Backing engine"
+            prefixLabel="Engine"
+            value={chosenProvider}
+            placeholder="Backing engine"
+            disabled={chatBusy}
+            options={engineOptions}
+            onChange={nextProvider => {
+              const entry = connections.entries.find(e => e.id === nextProvider);
+              const nextModel = entry?.defaultModelId ?? entry?.models[0]?.id ?? '';
+              void selectBackingEngine(nextProvider, nextModel);
+            }}
+          />
+        );
+      })()}{(() => {
+        const activeEntry = connections?.entries.find(e => e.id === chosenProvider);
+        const isCli = activeEntry?.engineKind === 'cli_harness';
+        const availableModels = chosenProvider === 'ollama'
+          ? (models?.models ?? [])
+          : (activeEntry?.models ?? []);
+        const groupedModels = groupModelsByEffort(availableModels);
+        const activeGroup = groupedModels.find(g => g.defaultModelId === chosenModel || g.variants.some(v => v.modelId === chosenModel));
+        const selectedBaseKey = activeGroup?.baseKey ?? chosenModel;
+        const modelOptions: DropUpOption[] = [
+          ...(chosenModel && !activeGroup
+            ? [{ value: chosenModel, label: `${chosenModel} (unavailable)`, disabled: true }]
+            : []),
+          ...groupedModels.map(g => ({ value: g.baseKey, label: g.displayName })),
+        ];
+        return <>
+          <DropUpSelect
+            ariaLabel={`Model for ${conversation ? 'this conversation' : 'a new conversation'}`}
+            prefixLabel="Model"
+            value={selectedBaseKey}
+            placeholder="Choose a model"
+            disabled={chatBusy || (chosenProvider === 'ollama' && models?.status !== 'available')}
+            options={modelOptions}
+            onChange={nextBaseKey => {
+              const group = groupedModels.find(g => g.baseKey === nextBaseKey);
+              void selectModel(group ? group.defaultModelId : nextBaseKey);
+            }}
+          />
+          {activeGroup && activeGroup.variants.length > 1 && (
+            <DropUpSelect
+              ariaLabel="Reasoning effort"
+              prefixLabel="Effort"
+              value={chosenModel}
+              disabled={chatBusy}
+              options={activeGroup.variants.map(v => ({ value: v.modelId, label: v.label }))}
+              onChange={nextModelId => void selectModel(nextModelId)}
+            />
+          )}
+          {isCli && (
+            <DropUpSelect
+              ariaLabel="CLI harness mode"
+              prefixLabel="Mode"
+              value={chosenHarnessMode}
+              disabled={chatBusy}
+              options={[
+                { value: 'read_only', label: 'Read-only (safe)' },
+                { value: 'workspace_write', label: 'Workspace write (scoped)' },
+              ]}
+              onChange={nextMode => void selectBackingEngine(chosenProvider, chosenModel, nextMode)}
+            />
+          )}
+        </>;
+      })()}<span className="composer-spacer" />{hasPendingWork && <select className="delivery-mode" aria-label="Follow-up delivery" value={deliveryMode} onChange={event => setDeliveryMode(event.target.value as 'queue' | 'send_now')}><option value="queue">Queue</option><option value="send_now">Send Now</option></select>}{running && <button className="send-button stop-button" aria-label="Stop response" title="Stop response" onClick={() => void stopResponse()} disabled={chatBusy}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="2" /></svg></button>}{(!running || hasDraft) && <button className="send-button" aria-label={editingQueuedRunId ? 'Replace queued message' : hasPendingWork ? deliveryMode === 'queue' ? 'Queue message' : 'Send now' : 'Send'} title={editingQueuedRunId ? 'Replace queued message (Enter)' : 'Send (Enter)'} onClick={() => void sendMessage()} disabled={!canSend || (!draft.trim() && selectedFiles.length === 0) || chatBusy || (queuedCount >= 8 && !editingQueuedRunId)}><Icon name="send" size={22} /></button>}</div></div>
       <footer>{queuedCount > 0 ? `${queuedCount} queued · each reply keeps the model selected when sent` : hasDraft ? 'Enter to send · Shift+Enter for a new line' : 'Files stay in this workspace · Text and images are sent to compatible local models'}</footer></div>
     </section></div>
     {memberPanel.present && <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />}{memberPanel.present && <CouncilMember config={configuration.current} profileId={activeProfile?.id} memoryRefreshKey={memoryRefreshKey} activity={running ? conversation?.messages.some(message => message.role === 'assistant' && message.status === 'Running' && !!message.text) ? 'idea' : 'pondering' : 'neutral'} closing={memberPanel.closing} identity={identity} resizePane={{ value: Math.min(memberPaneWidth, rightPaneResizeMax), min: 240, max: rightPaneResizeMax, onResize: setMemberPaneWidth }} onChange={updateMemberIdentity} onClose={() => setShowMember(false)} storageError={profileErrorForActive || storageError} saving={profileSaving} onRetrySave={() => { if (!activeProfile) return; const profileId = activeProfile.id; setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; }); setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 })); }} retryAvailable={profileDirty && !!profileErrorForActive} />}

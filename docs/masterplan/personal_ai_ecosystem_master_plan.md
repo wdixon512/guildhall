@@ -307,7 +307,7 @@ Whether a Council Member is using Guildhall's native `.NET` MCP loop (with Ollam
 | Ecosystem | Pillar 1: Direct Model API Adapter | Pillar 2: Local CLI Harness Adapter | Auth & Credential Storage |
 |---|---|---|---|
 | **Local / Open Weights** | Ollama (`/api/tags`, `/api/chat`, `/api/ps`) | Optional local CLI tools | None required (loopback HTTP) |
-| **Google Gemini** | Gemini REST API (`generativelanguage.googleapis.com`) | **Gemini CLI** (`gemini --acp` or `gemini -p --output-format stream-json`) | API key in Windows DPAPI **or** Gemini CLI Google OAuth login |
+| **Google Gemini / Antigravity** | Gemini REST API (`generativelanguage.googleapis.com`) | **Antigravity CLI** (`agy -p=<prompt> --output-format stream-json` / `agy acp`) and **Gemini CLI** (`gemini -p "" --output-format stream-json`) | API key in Windows DPAPI **or** Antigravity CLI Google OAuth login |
 | **Anthropic Claude** | Anthropic Messages API (`/v1/messages`) | **Claude Code CLI** (`claude -p --output-format stream-json` / ACP) | API key in Windows DPAPI **or** Claude Code subscription login |
 | **OpenAI / ChatGPT** | OpenAI Responses / Chat Completions API | **OpenAI Codex CLI** (`codex exec --json` / `codex app-server`) | API key in Windows DPAPI **or** Codex CLI ChatGPT Plus/Pro login |
 | **Cursor** | N/A (Cursor has no standalone public LLM API) | **Cursor Agent CLI** (`agent -p --output-format stream-json`) | Cursor CLI subscription login |
@@ -479,7 +479,7 @@ This same orchestration pattern governs **both** how development agents build Gu
 
 ### Phase 4: Controlled Coding Workspace, Worktrees, Rollbacks, and Enforced Access Modes
 
-- **Build:** Local project/repository picker (working offline without GitHub), isolated Git worktree management, **Tool Execution Rollbacks** (transactional/compensating rollback mechanisms for failed or rejected tool edits and commands), hardcoded ASP.NET Core command sandboxing and mandatory human-in-the-loop approval gates, native diff preview & review loop in Session Tools, Project-scoped memory notes, and host-enforced access modes (`Always ask`, `Ask for potentially unsafe actions`, `Unrestricted / autopilot`) governing both native MCP tools and wrapped CLI harnesses.
+- **Build:** Local project/repository picker (working offline without GitHub), isolated Git worktree management, **Tool Execution Rollbacks** (transactional/compensating rollback mechanisms for failed or rejected tool edits and commands), hardcoded ASP.NET Core command sandboxing and mandatory human-in-the-loop approval gates, native diff preview & review loop in Session Tools, Project-scoped memory notes, and host-enforced access modes (`Always ask`, `Ask for potentially unsafe actions`, `Unrestricted / autopilot`) governing both native MCP tools and wrapped CLI harnesses. Split the Phase 2 shared `CliHarnessEngine` into dedicated per-CLI `IBackingEngine` / ACP protocol adapters (`agy acp`, `codex app-server`, `claude` bidirectional stream-json, `agent`) once interactive tool-approval callbacks are wired.
 - **Done when:** A Council Member fixes a failing test in an isolated worktree, recovers or rolls back cleanly from a simulated tool failure, runs validation under the selected access policy, presents a reviewable diff inside Guildhall, and merges only after human approval.
 
 ### Phase 5: Private Infrastructure and SQL Server MCP

@@ -88,11 +88,10 @@ public sealed class MemoryNotesTests
                     }
                     await before.Database.MigrateAsync("20261116140438_GuildhallBehaviorSettings");
                     await before.Database.ExecuteSqlRawAsync("GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.AgentDefinitions TO [guildhall_runtime]; GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.Conversations TO [guildhall_runtime]; GRANT SELECT ON dbo.ChatRuns TO [guildhall_runtime]; GRANT SELECT ON dbo.ApplicationMetadata TO [guildhall_runtime]; GRANT SELECT ON dbo.__EFMigrationsHistory TO [guildhall_runtime];");
-                    before.AgentDefinitions.Add(new AgentDefinition { Id = memberA, Name = "Maren", Role = "Steward", PortraitId = 0, Accent = "#71465f", Instructions = "A", Revision = 1 });
-                    before.AgentDefinitions.Add(new AgentDefinition { Id = memberB, Name = "Scholar", Role = "Analyst", PortraitId = 1, Accent = "#536078", Instructions = "B", Revision = 1 });
+                    await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.AgentDefinitions (Id, Name, Role, PortraitId, CustomPortrait, Accent, IsArchived, Instructions, DefaultModelId, Revision) VALUES ({memberA}, {"Maren"}, {"Steward"}, {0}, {(string?)null}, {"#71465f"}, {false}, {"A"}, {(string?)null}, {1L})");
+                    await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.AgentDefinitions (Id, Name, Role, PortraitId, CustomPortrait, Accent, IsArchived, Instructions, DefaultModelId, Revision) VALUES ({memberB}, {"Scholar"}, {"Analyst"}, {1}, {(string?)null}, {"#536078"}, {false}, {"B"}, {(string?)null}, {1L})");
                     var now = DateTime.UtcNow;
-                    before.Conversations.Add(new Conversation { Id = conversationId, AgentDefinitionId = memberA, Title = "Source chat", CreatedUtc = now, UpdatedUtc = now, Revision = 1 });
-                    await before.SaveChangesAsync();
+                    await before.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO dbo.Conversations (Id, AgentDefinitionId, Title, SelectedModelId, CreatedUtc, UpdatedUtc, IsArchived, ArchivedUtc, Revision) VALUES ({conversationId}, {memberA}, {"Source chat"}, {(string?)null}, {now}, {now}, {false}, {(DateTime?)null}, {1L})");
                 }
 
                 await using (var upgrade = new GuildhallDbContext(options))

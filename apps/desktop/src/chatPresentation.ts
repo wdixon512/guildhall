@@ -57,3 +57,60 @@ export function markConversationRead(id: string, lastResponseUtc?: string | null
   if (!lastResponseUtc || !Number.isFinite(Date.parse(lastResponseUtc))) return;
   try { localStorage.setItem(READ_KEY, JSON.stringify({ ...readWatermarks(), [id]: lastResponseUtc })); } catch { /* Read state stays usable for this view. */ }
 }
+
+export interface EffortVariant {
+  effort: string;
+  label: string;
+  modelId: string;
+}
+
+export interface GroupedModelOption {
+  baseKey: string;
+  displayName: string;
+  defaultModelId: string;
+  variants: EffortVariant[];
+}
+
+const EFFORT_ORDER: Record<string, number> = { low: 0, medium: 1, high: 2, xhigh: 3 };
+const EFFORT_LABELS: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh' };
+const EFFORT_SUFFIX_RE = /^(.+?)-(low|medium|high|xhigh)$/i;
+const EFFORT_PAREN_RE = /\s*\((Low|Medium|High|XHigh)\)\s*$/i;
+
+export function groupModelsByEffort(models: { id: string; displayName: string }[]): GroupedModelOption[] {
+  const groups = new Map<string, GroupedModelOption>();
+
+  for (const model of models) {
+    const idMatch = EFFORT_SUFFIX_RE.exec(model.id);
+    const nameMatch = EFFORT_PAREN_RE.exec(model.displayName);
+    if (idMatch && nameMatch) {
+      const baseKey = idMatch[1];
+      const effort = idMatch[2].toLowerCase();
+      const baseName = model.displayName.replace(EFFORT_PAREN_RE, '').trim();
+      const existing = groups.get(baseKey);
+      const variant: EffortVariant = { effort, label: EFFORT_LABELS[effort] ?? effort, modelId: model.id };
+      if (existing) {
+        if (!existing.variants.some(v => v.effort === effort))
+          existing.variants.push(variant);
+      } else {
+        groups.set(baseKey, { baseKey, displayName: baseName, defaultModelId: model.id, variants: [variant] });
+      }
+    } else {
+      groups.set(model.id, {
+        baseKey: model.id,
+        displayName: model.displayName,
+        defaultModelId: model.id,
+        variants: [],
+      });
+    }
+  }
+
+  for (const group of groups.values()) {
+    if (group.variants.length > 0) {
+      group.variants.sort((a, b) => (EFFORT_ORDER[a.effort] ?? 99) - (EFFORT_ORDER[b.effort] ?? 99));
+      const medium = group.variants.find(v => v.effort === 'medium');
+      group.defaultModelId = (medium ?? group.variants[0]).modelId;
+    }
+  }
+
+  return Array.from(groups.values());
+}
