@@ -85,8 +85,17 @@ public sealed class ConnectionCatalogTests
         var agyCli = catalog.Entries.Single(x => x.Id == "agy-cli");
         Assert.Equal("Unavailable", agyCli.Status);
 
+        var fsMcp = catalog.Entries.Single(x => x.Id == "filesystem-mcp");
+        Assert.Equal("Connected", fsMcp.Status);
+        Assert.False(fsMcp.IsPlanned);
+
         var github = catalog.Entries.Single(x => x.Id == "github-mcp");
-        Assert.Equal("Planned", github.Status);
-        Assert.True(github.IsPlanned);
+        Assert.Equal("Not connected", github.Status);
+        Assert.True(github.CanConfigureApiKey);
+        Assert.False(github.IsPlanned);
+
+        var sqlMcp = catalog.Entries.Single(x => x.Id == "sql-server-mcp");
+        Assert.Equal("Planned", sqlMcp.Status);
+        Assert.True(sqlMcp.IsPlanned);
     }
 }

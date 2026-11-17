@@ -1,5 +1,7 @@
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Configuration;
+using Guildhall.AgentHost.Mcp;
+using Guildhall.AgentHost.Mcp.Providers;
 using Guildhall.AgentHost.Persistence;
 using Guildhall.AgentHost.Providers;
 using Guildhall.AgentHost.Providers.Cli;
@@ -50,12 +52,24 @@ builder.Services.AddHttpClient("ollama-chat", (services, http) => { http.BaseAdd
 builder.Services.AddHttpClient("openai-api", http => { http.BaseAddress = new Uri("https://api.openai.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddHttpClient("gemini-api", http => { http.BaseAddress = new Uri("https://generativelanguage.googleapis.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddHttpClient("anthropic-api", http => { http.BaseAddress = new Uri("https://api.anthropic.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("mcp-http", http => { http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("github-api", http => { http.BaseAddress = new Uri("https://api.github.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("google-drive-api", http => { http.BaseAddress = new Uri("https://www.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
+builder.Services.AddHttpClient("gmail-api", http => { http.BaseAddress = new Uri("https://gmail.googleapis.com"); http.Timeout = TimeSpan.FromSeconds(15); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
 builder.Services.AddSingleton<EnvironmentScrubber>();
 builder.Services.AddSingleton<WorkspacePathGuard>();
 builder.Services.AddSingleton<ExfiltrationGuard>();
 builder.Services.AddSingleton<ToolPermissionGate>();
 builder.Services.AddSingleton<ICliProcessRunner, CliProcessRunner>();
+builder.Services.AddSingleton<McpHealthSupervisor>();
+builder.Services.AddSingleton<IMcpJsonRpcClient, McpJsonRpcClient>();
+builder.Services.AddSingleton<IMcpToolProvider, LocalFilesystemMcpProvider>();
+builder.Services.AddSingleton<IMcpToolProvider, LocalGitMcpProvider>();
+builder.Services.AddSingleton<IMcpToolProvider, GitHubMcpProvider>();
+builder.Services.AddSingleton<IMcpToolProvider, GoogleDriveMcpProvider>();
+builder.Services.AddSingleton<IMcpToolProvider, GmailMcpProvider>();
+builder.Services.AddSingleton<McpRegistry>();
 builder.Services.AddSingleton<IBackingEngine, OllamaBackingEngine>();
 builder.Services.AddSingleton<IBackingEngine, OpenAiCloudEngine>();
 builder.Services.AddSingleton<IBackingEngine, GeminiCloudEngine>();
@@ -84,6 +98,7 @@ app.MapGet("/ready", async (IDatabaseReadiness readiness, CancellationToken canc
 });
 app.MapGet("/models", (OllamaDiscovery discovery, CancellationToken cancellationToken) => discovery.DiscoverAsync(cancellationToken));
 app.MapConnections();
+app.MapMcpEndpoints();
 app.MapChat();
 app.Run();
 

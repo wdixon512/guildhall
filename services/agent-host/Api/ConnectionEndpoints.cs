@@ -10,7 +10,10 @@ public static class ConnectionEndpoints
     {
         "openai-api",
         "gemini-api",
-        "anthropic-api"
+        "anthropic-api",
+        "github-mcp",
+        "google-drive-mcp",
+        "gmail-mcp"
     };
 
     public static IEndpointRouteBuilder MapConnections(this IEndpointRouteBuilder app)

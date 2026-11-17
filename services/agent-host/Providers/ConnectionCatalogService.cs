@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using Guildhall.AgentHost.Api;
 using Guildhall.AgentHost.Configuration;
+using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Providers.Cli;
 using Guildhall.AgentHost.Providers.Cloud;
 using Guildhall.AgentHost.Providers.Ollama;
@@ -14,7 +15,9 @@ public sealed class ConnectionCatalogService(
     ICliProcessRunner cliProcessRunner,
     EnvironmentScrubber environmentScrubber,
     IHttpClientFactory httpClients,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    McpRegistry? mcpRegistry = null,
+    McpHealthSupervisor? mcpHealth = null)
 {
     public static class Statuses
     {
@@ -38,9 +41,11 @@ public sealed class ConnectionCatalogService(
         foreach (var descriptor in CliHarnessDescriptors.All)
             entries.Add(await BuildCliEntryAsync(descriptor, runLiveProbes, ct));
 
-        entries.Add(BuildPlannedEntry("github-mcp", "GitHub", "MCP & Service Integrations (Phase 3)"));
-        entries.Add(BuildPlannedEntry("google-drive-mcp", "Google Drive", "MCP & Service Integrations (Phase 3)"));
-        entries.Add(BuildPlannedEntry("gmail-mcp", "Gmail", "MCP & Service Integrations (Phase 3)"));
+        entries.Add(await BuildLocalMcpEntryAsync("filesystem-mcp", "Local Filesystem MCP (Read-Only)", runLiveProbes, ct));
+        entries.Add(await BuildLocalMcpEntryAsync("git-mcp", "Local Git MCP (Read-Only)", runLiveProbes, ct));
+        entries.Add(await BuildCredentialMcpEntryAsync("github-mcp", "GitHub MCP", "Personal Access Token (DPAPI)", runLiveProbes, ct));
+        entries.Add(await BuildCredentialMcpEntryAsync("google-drive-mcp", "Google Drive MCP", "OAuth access token (DPAPI)", runLiveProbes, ct));
+        entries.Add(await BuildCredentialMcpEntryAsync("gmail-mcp", "Gmail MCP", "OAuth access token (DPAPI)", runLiveProbes, ct));
         entries.Add(BuildPlannedEntry("sql-server-mcp", "SQL Server MCP", "MCP & Service Integrations (Phase 5)"));
 
         return new ConnectionsCatalogResponse(entries, timeProvider.GetUtcNow());
@@ -60,6 +65,23 @@ public sealed class ConnectionCatalogService(
                 _ => "Anthropic Claude API"
             };
             return await BuildCloudEntryAsync(id, name, runLiveProbe: true, ct);
+        }
+
+        if (id is "filesystem-mcp" or "git-mcp")
+        {
+            var name = id == "filesystem-mcp" ? "Local Filesystem MCP (Read-Only)" : "Local Git MCP (Read-Only)";
+            return await BuildLocalMcpEntryAsync(id, name, runLiveProbe: true, ct);
+        }
+
+        if (id is "github-mcp" or "google-drive-mcp" or "gmail-mcp")
+        {
+            var (name, hint) = id switch
+            {
+                "github-mcp" => ("GitHub MCP", "Personal Access Token (DPAPI)"),
+                "google-drive-mcp" => ("Google Drive MCP", "OAuth access token (DPAPI)"),
+                _ => ("Gmail MCP", "OAuth access token (DPAPI)")
+            };
+            return await BuildCredentialMcpEntryAsync(id, name, hint, runLiveProbe: true, ct);
         }
 
         var descriptor = CliHarnessDescriptors.Find(id);
@@ -347,6 +369,91 @@ public sealed class ConnectionCatalogService(
             ],
             _ => [new(descriptor.DefaultModelId, $"{descriptor.DisplayName} (Default)", false)]
         };
+
+    private async Task<ConnectionEntryResponse> BuildLocalMcpEntryAsync(
+        string serverId,
+        string displayName,
+        bool runLiveProbe,
+        CancellationToken ct)
+    {
+        var state = runLiveProbe && mcpRegistry is not null
+            ? await mcpRegistry.ProbeServerAsync(serverId, ct)
+            : mcpHealth?.Get(serverId);
+
+        var status = state?.Status switch
+        {
+            McpHealthStatuses.Failed => Statuses.Unavailable,
+            McpHealthStatuses.Disconnected => Statuses.Unavailable,
+            _ => Statuses.Connected,
+        };
+
+        var detail = state?.LastError
+            ?? (serverId == "filesystem-mcp"
+                ? "Built-in Tier 1 read-only workspace inspector"
+                : "Built-in Tier 1 read-only Git inspector");
+
+        return new ConnectionEntryResponse(
+            Id: serverId,
+            Pillar: "MCP & Service Integrations",
+            EngineKind: "mcp",
+            DisplayName: displayName,
+            AuthType: "local_workspace",
+            Status: status,
+            StatusDetail: detail,
+            KeyHint: null,
+            DefaultModelId: null,
+            Models: [],
+            CanConfigureApiKey: false,
+            CanProbe: true,
+            IsPlanned: false);
+    }
+
+    private async Task<ConnectionEntryResponse> BuildCredentialMcpEntryAsync(
+        string serverId,
+        string displayName,
+        string authDescription,
+        bool runLiveProbe,
+        CancellationToken ct)
+    {
+        var cred = await credentialStore.GetStatusAsync(serverId, ct);
+        var status = cred.HasKey ? Statuses.Connected : Statuses.NotConnected;
+        var detail = cred.HasKey
+            ? $"Token stored in Windows DPAPI ({cred.MaskedHint})"
+            : $"Add {authDescription}";
+
+        if (cred.HasKey && runLiveProbe && mcpRegistry is not null)
+        {
+            var probe = await mcpRegistry.ProbeServerAsync(serverId, ct);
+            if (probe is not null)
+            {
+                if (probe.Status == McpHealthStatuses.Connected)
+                {
+                    status = Statuses.Connected;
+                    detail = probe.LastError ?? $"Verified via {displayName} ({cred.MaskedHint})";
+                }
+                else
+                {
+                    status = Statuses.Unavailable;
+                    detail = probe.LastError ?? $"Could not reach {displayName}";
+                }
+            }
+        }
+
+        return new ConnectionEntryResponse(
+            Id: serverId,
+            Pillar: "MCP & Service Integrations",
+            EngineKind: "mcp",
+            DisplayName: displayName,
+            AuthType: "dpapi_token",
+            Status: status,
+            StatusDetail: detail,
+            KeyHint: cred.MaskedHint,
+            DefaultModelId: null,
+            Models: [],
+            CanConfigureApiKey: true,
+            CanProbe: true,
+            IsPlanned: false);
+    }
 
     private static ConnectionEntryResponse BuildPlannedEntry(string id, string displayName, string detail) =>
         new(
