@@ -101,7 +101,18 @@ public static class McpEndpoints
 
             db.McpServerRegistrations.Add(entity);
             await db.SaveChangesAsync(ct);
-            return Results.Created($"/mcp/servers/{entity.Id}", entity);
+            return Results.Created($"/mcp/servers/{entity.Id}", new CustomMcpServerView(
+                entity.Id,
+                entity.DisplayName,
+                entity.Transport,
+                entity.EndpointUrl,
+                entity.AllowPrivateTunnelHttp,
+                entity.SecurityTier,
+                entity.IsEnabled,
+                false,
+                entity.Revision,
+                0,
+                McpHealthStatuses.Disconnected));
         });
 
         app.MapGet("/mcp/servers/custom", async (
@@ -114,6 +125,17 @@ public static class McpEndpoints
             await using var db = await dbFactory.CreateDbContextAsync(ct);
             var list = await db.McpServerRegistrations.AsNoTracking()
                 .OrderBy(x => x.Id)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.DisplayName,
+                    x.Transport,
+                    x.EndpointUrl,
+                    x.AllowPrivateTunnelHttp,
+                    x.SecurityTier,
+                    x.IsEnabled,
+                    x.Revision
+                })
                 .ToListAsync(ct);
 
             var views = new List<CustomMcpServerView>(list.Count);

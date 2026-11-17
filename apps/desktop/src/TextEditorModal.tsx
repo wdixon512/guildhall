@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AssistantResponse } from './AssistantResponse';
 import { StreamingMarkdown } from './StreamingMarkdown';
 
 export function TextEditorModal({
@@ -7,10 +8,13 @@ export function TextEditorModal({
   title,
   subtitle,
   value,
-  maxLength,
+  maxLength = 8192,
   saving = false,
   error = '',
   supportsPreview = true,
+  readOnly = false,
+  liveStreaming = false,
+  statusBadge,
   saveLabel = 'Save',
   onSave,
   onClose,
@@ -19,23 +23,29 @@ export function TextEditorModal({
   title: string;
   subtitle?: string;
   value: string;
-  maxLength: number;
+  maxLength?: number;
   saving?: boolean;
   error?: string;
   supportsPreview?: boolean;
+  readOnly?: boolean;
+  liveStreaming?: boolean;
+  statusBadge?: string;
   saveLabel?: string;
-  onSave: (nextValue: string) => void | Promise<void>;
+  onSave?: (nextValue: string) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState(value);
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const dialogRef = useRef<HTMLFormElement>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
+  const latestValue = useRef(value);
+  latestValue.current = value;
 
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setDraft(value);
+      setDraft(latestValue.current);
       setMode('edit');
       returnFocus.current = document.activeElement as HTMLElement | null;
     }
@@ -46,12 +56,17 @@ export function TextEditorModal({
       returnFocus.current = null;
       if (target?.isConnected) window.setTimeout(() => target.focus(), 0);
     };
-  }, [open, value]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !readOnly || !liveStreaming || !streamRef.current) return;
+    streamRef.current.scrollTop = streamRef.current.scrollHeight;
+  }, [open, readOnly, liveStreaming, value]);
 
   if (!open) return null;
 
   const trimmedLength = draft.trim().length;
-  const invalid = trimmedLength === 0 || draft.length > maxLength;
+  const invalid = !readOnly && (trimmedLength === 0 || draft.length > maxLength);
 
   return createPortal(
     <div className="dialog-backdrop">
@@ -69,7 +84,7 @@ export function TextEditorModal({
           }
           if (event.key !== 'Tab') return;
           const controls = dialogRef.current?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), textarea:not(:disabled), input:not(:disabled)',
+            'button:not(:disabled), textarea:not(:disabled), input:not(:disabled), [tabindex="0"]',
           );
           if (!controls?.length) return;
           const first = controls[0];
@@ -84,7 +99,7 @@ export function TextEditorModal({
         }}
         onSubmit={event => {
           event.preventDefault();
-          if (!saving && !invalid) void onSave(draft);
+          if (!readOnly && !saving && !invalid && onSave) void onSave(draft);
         }}
       >
         <div className="text-editor-modal-header">
@@ -92,14 +107,21 @@ export function TextEditorModal({
             <h2 id="text-editor-modal-title">{title}</h2>
             {subtitle && <small>{subtitle}</small>}
           </div>
-          {supportsPreview && (
+          {!readOnly && supportsPreview && (
             <div className="member-instructions-tabs" role="group" aria-label="Modal editor view">
               <button type="button" className={mode === 'edit' ? 'selected' : ''} aria-pressed={mode === 'edit'} onClick={() => setMode('edit')}>Source</button>
               <button type="button" className={mode === 'preview' ? 'selected' : ''} aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>Preview</button>
             </div>
           )}
+          {readOnly && statusBadge && (
+            <span className={`status-pill ${statusBadge.toLowerCase()}`} role="status" aria-live="polite">{statusBadge}</span>
+          )}
         </div>
-        {mode === 'edit' ? (
+        {readOnly ? (
+          <div ref={streamRef} className="text-editor-modal-preview markdown-body text-editor-modal-stream" role="region" tabIndex={0} aria-label={`${title} output`}>
+            {value.trim() ? <AssistantResponse text={value} streaming={liveStreaming} /> : <p className="member-instructions-empty">Waiting for output…</p>}
+          </div>
+        ) : mode === 'edit' ? (
           <textarea
             autoFocus
             aria-label={title}
@@ -115,11 +137,17 @@ export function TextEditorModal({
           </div>
         )}
         <div className="text-editor-modal-footer">
-          <small>{draft.length}/{maxLength}</small>
+          {!readOnly && <small>{draft.length}/{maxLength}</small>}
           {error && <p className="chat-error" role="alert">{error}</p>}
           <div className="text-editor-modal-actions">
-            <button type="button" onClick={onClose} disabled={saving}>Cancel</button>
-            <button type="submit" disabled={saving || invalid}>{saving ? 'Saving…' : saveLabel}</button>
+            <button type="button" autoFocus={readOnly} disabled={saving} onClick={onClose}>
+              {readOnly ? 'Close' : 'Cancel'}
+            </button>
+            {!readOnly && (
+              <button type="submit" disabled={saving || invalid}>
+                {saving ? 'Saving…' : saveLabel}
+              </button>
+            )}
           </div>
         </div>
       </form>

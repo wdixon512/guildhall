@@ -83,11 +83,15 @@ describe('ConnectionsCatalog', () => {
       />,
     );
 
-    expect(screen.getByText('Local Runtimes')).toBeInTheDocument();
-    expect(screen.getByText('Cloud Model APIs')).toBeInTheDocument();
-    expect(screen.getByText('Local CLI Agent Harnesses')).toBeInTheDocument();
-    expect(screen.getByText('MCP & Service Integrations')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Local Runtimes' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Cloud Model APIs' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Local CLI Agent Harnesses' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'MCP & Service Integrations' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Planned' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Cloud APIs/i }));
+    expect(screen.getByRole('heading', { name: 'Cloud Model APIs' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Local Runtimes' })).toBeNull();
   });
 
   it('shows Install link button for unavailable CLI harnesses', () => {
@@ -158,12 +162,36 @@ describe('ConnectionsCatalog', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add API key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add OpenAI API API key' }));
     fireEvent.change(screen.getByLabelText('OpenAI API API key'), { target: { value: 'sk-test-12345678' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save & test' }));
 
     await waitFor(() => expect(onCatalogUpdated).toHaveBeenCalledTimes(1));
     expect(onCatalogUpdated.mock.calls[0][0].entries[1].status).toBe('Connected');
     fetchSpy.mockRestore();
+  });
+
+  it('sorts connected services first, then alphabetically within each pillar', () => {
+    const unsortedCatalog: ConnectionsCatalogData = {
+      checkedUtc: '2026-11-17T00:00:00Z',
+      entries: [
+        { ...sampleCatalog.entries[3], id: 'gmail-mcp', displayName: 'Gmail MCP', status: 'Not connected', isPlanned: false },
+        { ...sampleCatalog.entries[3], id: 'sql-server-mcp', displayName: 'SQL Server MCP', status: 'Connected', isPlanned: false },
+        { ...sampleCatalog.entries[3], id: 'filesystem-mcp', displayName: 'Filesystem MCP', status: 'Connected', isPlanned: false },
+      ],
+    };
+
+    render(
+      <ConnectionsCatalog
+        config={config}
+        catalog={unsortedCatalog}
+        loading={false}
+        onCatalogUpdated={vi.fn()}
+        onProbeAll={vi.fn()}
+      />,
+    );
+
+    const names = screen.getAllByText(/MCP$/).map(el => el.textContent);
+    expect(names).toEqual(['Filesystem MCP', 'SQL Server MCP', 'Gmail MCP']);
   });
 });

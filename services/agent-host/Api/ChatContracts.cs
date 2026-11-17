@@ -1,7 +1,5 @@
 namespace Guildhall.AgentHost.Api;
 
-public sealed record AssistantResponse(Guid Id, string Name, string Instructions, string? DefaultModelId, long Revision);
-public sealed record UpdateAssistantRequest(string Instructions, string? DefaultModelId, long ExpectedRevision);
 public sealed record GuildhallBehaviorResponse(string Instructions, long Revision);
 public sealed record UpdateGuildhallBehaviorRequest(string Instructions, long ExpectedRevision);
 public sealed record AgentProfileResponse(Guid Id, string Name, string Role, int PortraitId, string? CustomPortrait, string Accent, string Instructions, string? DefaultModelId, long Revision, bool IsArchived, string DefaultProviderId = "ollama", string? DefaultHarnessMode = null, IReadOnlyList<string>? EnabledToolIds = null, string PermissionPolicy = "ask_unsafe");

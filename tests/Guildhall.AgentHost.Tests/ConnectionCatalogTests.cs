@@ -38,12 +38,12 @@ public sealed class ConnectionCatalogTests
             Task.FromResult(0);
     }
 
-    private sealed class StubHandler : HttpMessageHandler
+    private sealed class StubHandler(string modelsJson = "{\"models\":[]}") : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"models\":[]}", Encoding.UTF8, "application/json")
+                Content = new StringContent(modelsJson, Encoding.UTF8, "application/json")
             });
     }
 
@@ -98,5 +98,29 @@ public sealed class ConnectionCatalogTests
         Assert.Equal("Not connected", sqlMcp.Status);
         Assert.True(sqlMcp.CanProbe);
         Assert.False(sqlMcp.IsPlanned);
+    }
+
+    [Fact]
+    public async Task ResolveDefaultModelIdAsync_ResolvesOllamaCloudAndCliDefaults()
+    {
+        var ollamaHttp = new HttpClient(new StubHandler("{\"models\":[{\"name\":\"qwen3:4b\"}]}"))
+        {
+            BaseAddress = new Uri("http://127.0.0.1:11434")
+        };
+        var catalogService = new ConnectionCatalogService(
+            new OllamaDiscovery(ollamaHttp),
+            new StubCredentialStore(new Dictionary<string, string>()),
+            new StubCliRunner(null),
+            new EnvironmentScrubber(),
+            new StubClientFactory(ollamaHttp),
+            TimeProvider.System);
+
+        var ollamaDefault = await catalogService.ResolveDefaultModelIdAsync("ollama", CancellationToken.None);
+        var openaiDefault = await catalogService.ResolveDefaultModelIdAsync("openai-api", CancellationToken.None);
+        var codexDefault = await catalogService.ResolveDefaultModelIdAsync("codex-cli", CancellationToken.None);
+
+        Assert.Equal("qwen3:4b", ollamaDefault);
+        Assert.False(string.IsNullOrWhiteSpace(openaiDefault));
+        Assert.Equal(CliHarnessDescriptors.Find("codex-cli")!.DefaultModelId, codexDefault);
     }
 }

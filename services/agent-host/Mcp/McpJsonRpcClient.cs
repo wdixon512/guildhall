@@ -129,30 +129,10 @@ public sealed class McpJsonRpcClient(
         if (string.Equals(mediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
         {
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
             JsonElement? lastResult = null;
-            var dataBuffer = new StringBuilder();
-            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            await foreach (var payload in Guildhall.AgentHost.Providers.Cloud.SseStreamReader.ReadDataEventsAsync(stream, cancellationToken))
             {
-                if (line.Length == 0)
-                {
-                    if (dataBuffer.Length > 0)
-                    {
-                        using var sseDoc = JsonDocument.Parse(dataBuffer.ToString());
-                        lastResult = UnwrapJsonRpcResult(sseDoc.RootElement);
-                        dataBuffer.Clear();
-                    }
-                    continue;
-                }
-                if (line.StartsWith("data:", StringComparison.Ordinal))
-                {
-                    if (dataBuffer.Length > 0) dataBuffer.Append('\n');
-                    dataBuffer.Append(line.AsSpan(5).TrimStart());
-                }
-            }
-            if (dataBuffer.Length > 0)
-            {
-                using var sseDoc = JsonDocument.Parse(dataBuffer.ToString());
+                using var sseDoc = JsonDocument.Parse(payload);
                 lastResult = UnwrapJsonRpcResult(sseDoc.RootElement);
             }
             if (lastResult.HasValue)

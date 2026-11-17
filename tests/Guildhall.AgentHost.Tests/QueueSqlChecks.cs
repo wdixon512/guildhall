@@ -133,7 +133,7 @@ internal static class QueueSqlChecks
         var staleId = Guid.NewGuid();
         verify.ChatRuns.Add(new ChatRun { Id = staleId, ConversationId = conversation.Id, TurnNumber = 6, ClientRequestId = "stale-queued", RequestFingerprint = "stale", ModelId = "model-a", InstructionsSnapshot = "test", Status = ChatRunStatus.Queued, StartedUtc = DateTime.UtcNow.AddMinutes(-1), UpdatedUtc = DateTime.UtcNow.AddMinutes(-1) });
         await verify.SaveChangesAsync();
-        await Chat.ChatRecovery.ReconcileAsync(new Factory(options), DateTime.UtcNow, default);
+        await new Chat.ChatRecoveryService(new Factory(options), TimeProvider.System).ReconcileAsync(DateTime.UtcNow, default);
         await using var restarted = new GuildhallDbContext(options);
         Assert.Equal(ChatRunStatus.Interrupted, (await restarted.ChatRuns.SingleAsync(x => x.Id == staleId)).Status);
     }

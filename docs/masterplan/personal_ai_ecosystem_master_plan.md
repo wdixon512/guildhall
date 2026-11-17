@@ -495,8 +495,9 @@ This same orchestration pattern governs **both** how development agents build Gu
 ### Phase 7: Cross-Member Context Handoff, Delegation Dependency Graphs, and Multi-Agent Coordination
 
 - **Build:**
-  - **Conversation Reassignment ("Assign to guild member"):** Interactive handoff/edit mode allowing the user to transfer a conversation or curated context packet (full transcript, reviewed summary, or pinned items) from one Council Member to another across different backing engines.
+  - **Conversation Reassignment ("Assign to guild member") & Detached Memory Transplant:** Interactive handoff/edit mode allowing the user to transfer a conversation or curated context packet (full transcript, reviewed summary, or pinned items) from one Council Member to another across different backing engines, plus detaching/pasting a message or memory slice from one session (e.g., a scheduled task run) directly into another active session.
   - **Bounded Multi-Agent Delegation & Delegation Dependency Graphs:** Child-run protocol, supervisor-to-specialist task delegation, durable **Delegation Dependency Graphs** tracking multi-agent execution dependencies, per-agent tool and **Cross-Turn Budgets**, run graph visualization, and cascading cancellation/rollback propagation.
+  - **Post-Phase Prompt Engineering & Tool-Grounding Pass:** Dedicated prompt-engineering pass over Council Member preambles (e.g., Krug / Developer) and global instructions—especially for smaller local models (`qwen3:4b`)—to enforce strict tool-failure reporting and prohibit fabricated claims when tool calls fail.
 - **Done when:** You can reassign a session across Council Members or let a steward member delegate a bounded task graph to specialists (e.g., Architect on Claude/Gemini -> Builder on Codex/Gemini CLI -> Reviewer on Local Ollama) with full dependency graph tracking, provenance, and human approval boundaries.
 
 ### Phase 8: Dedicated Hardware and Advanced Capabilities

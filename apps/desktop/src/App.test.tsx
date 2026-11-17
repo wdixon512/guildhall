@@ -218,6 +218,7 @@ describe('connection status', () => {
     expect(screen.getByRole('button', { name: /^Send$/ })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
     expect(screen.getByRole('button', { name: /^New session$/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Maren sessions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Retained session' }));
     await screen.findByText('Preserved answer');
     fireEvent.click(screen.getByRole('button', { name: 'Member actions for Maren' }));
@@ -227,7 +228,7 @@ describe('connection status', () => {
     expect(screen.getByText('Preserved answer')).toBeInTheDocument();
   });
 
-  it('keeps member drafts while navigating and serializes edits made during a save', async () => {
+  it('keeps member drafts while navigating and requires clicking Save changes to persist', async () => {
     let maren = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Maren rules', revision: 1, isArchived: false };
     let tarin = { id: 'member-two', name: 'Tarin', role: 'Developer', portraitId: 1, accent: '#536078', instructions: 'Tarin rules', revision: 1, isArchived: false };
     const profilePatches: { id: string; body: Record<string, unknown> }[] = [];
@@ -254,28 +255,28 @@ describe('connection status', () => {
     render(<App />);
     await screen.findByRole('button', { name: 'Select Maren' });
     fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+
     const instructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
     fireEvent.change(instructions, { target: { value: 'Maren first draft' } });
-    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'New session with Maren' })).toBeEnabled();
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(profilePatches).toHaveLength(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Select Tarin' }));
     expect(instructions).toHaveValue('Tarin rules');
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
     expect(instructions).toHaveValue('Maren first draft');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
 
-    await waitFor(() => expect(profilePatches).toHaveLength(1), { timeout: 1500 });
-    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
-    fireEvent.change(instructions, { target: { value: 'Maren newer draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Select Tarin' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Select Maren' }));
-    expect(instructions).toHaveValue('Maren newer draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(profilePatches).toHaveLength(1));
+    expect(profilePatches[0].body).toMatchObject({ instructions: 'Maren first draft', expectedRevision: 1 });
 
     releaseFirstSave?.({ ...maren, instructions: 'Maren first draft', revision: 2 });
-    await waitFor(() => expect(profilePatches).toHaveLength(2), { timeout: 1500 });
-    expect(profilePatches[1].body).toMatchObject({ instructions: 'Maren newer draft', expectedRevision: 2 });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled());
-    expect(instructions).toHaveValue('Maren newer draft');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull());
+    expect(instructions).toHaveValue('Maren first draft');
   });
 
   it('keeps a failed member draft and retries it without disabling council navigation', async () => {
@@ -294,7 +295,7 @@ describe('connection status', () => {
       }
       if (path === `/agents/${profile.id}` && init?.method === 'PATCH') {
         attempts++;
-        if (attempts < 3) throw new Error('revision conflict');
+        if (attempts < 2) throw new Error('revision conflict');
         profile = { ...profile, ...JSON.parse(init.body as string), revision: profile.revision + 1 };
         return profile;
       }
@@ -306,7 +307,7 @@ describe('connection status', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize guild member' }));
     const instructions = screen.getByRole('textbox', { name: 'Instructions / rules' });
     fireEvent.change(instructions, { target: { value: 'Keep this draft after a save conflict' } });
-    expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await screen.findByRole('button', { name: 'Retry save' });
     expect(instructions).toHaveValue('Keep this draft after a save conflict');
     expect(attempts).toBe(1);
@@ -319,11 +320,7 @@ describe('connection status', () => {
     expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
-    await waitFor(() => expect(attempts).toBe(2), { timeout: 1500 });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry save' })).toBeInTheDocument());
-    fireEvent.change(instructions, { target: { value: 'Temporary edit' } });
-    fireEvent.change(instructions, { target: { value: 'Keep this draft after a save conflict' } });
-    await waitFor(() => expect(attempts).toBe(3), { timeout: 1500 });
+    await waitFor(() => expect(attempts).toBe(2));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry save' })).toBeNull());
     expect(instructions).toHaveValue('Keep this draft after a save conflict');
     expect(screen.getByRole('button', { name: 'Select Tarin' })).toBeEnabled();
@@ -610,9 +607,9 @@ describe('connection status', () => {
     render(<App />);
     const selector = await screen.findByRole('button', { name: 'Model for a new conversation' });
     await waitFor(() => expect(selector).toBeEnabled());
-    expect(screen.getByRole('button', { name: 'New session' })).toBeDisabled();
     fireEvent.click(selector);
     fireEvent.click(screen.getByRole('option', { name: /qwen3:4b/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New session' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'New session' }));
     await waitFor(() => expect(request).toHaveBeenCalledWith(expect.anything(), '/conversations/chat-one', expect.anything()));
     const sessionSelector = await screen.findByRole('button', { name: 'Model for this conversation' });
@@ -726,11 +723,11 @@ describe('connection status', () => {
     expect(await submittedFile.text()).toBe('local note');
     expect(await screen.findByRole('button', { name: /notes.txt/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Session tools/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Terminal/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Terminal/ }));
     expect(screen.getByText(/terminal is planned/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Context usage/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Context usage/ }));
     expect(await screen.findByRole('region', { name: 'Context usage inspector' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Scheduled tasks — planned' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Scheduled tasks' })).toBeEnabled();
   });
   it('recovers after host failure using refresh', async () => {
     vi.mocked(request).mockRejectedValue(new Error('Disconnected'));
@@ -764,12 +761,14 @@ describe('connection status', () => {
       instanceTag: 'v0.1.0 · feature-branch :43121',
     });
     const profile = { id: 'member-one', name: 'Maren', role: 'Steward', portraitId: 0, accent: '#71465f', instructions: 'Rules', revision: 1, isArchived: false };
+    const quietProfile = { id: 'member-two', name: 'Tarin', role: 'Developer', portraitId: 1, accent: '#536078', instructions: 'Rules', revision: 1, isArchived: false };
     const chats = [
-      { id: 'chat-a', title: 'First chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id },
+      { id: 'chat-a', title: 'First chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id, lastResponseUtc: '2026-11-17T12:00:00Z' },
       { id: 'chat-b', title: 'Second chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: profile.id },
+      { id: 'chat-c', title: 'Read chat', selectedModelId: 'one', revision: 1, isArchived: false, hasActiveRun: false, agentDefinitionId: quietProfile.id },
     ];
     vi.mocked(request).mockImplementation(async (_, path) => {
-      if (path === '/agents') return [profile];
+      if (path === '/agents') return [profile, quietProfile];
       if (path === '/health') return { status: 'ok', apiVersion: 1 };
       if (path === '/ready') return { status: 'ready' };
       if (path === '/models') return { providerId: 'ollama', status: 'available', models: [{ id: 'one', displayName: 'one' }] };
@@ -781,6 +780,9 @@ describe('connection status', () => {
     render(<App />);
     const openFirst = await screen.findByRole('button', { name: 'Open First chat' });
     const openSecond = screen.getByRole('button', { name: 'Open Second chat' });
+    // Member without unread chats starts auto-collapsed on startup.
+    expect(await screen.findByRole('button', { name: 'Expand Tarin sessions' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Open Read chat' })).toBeNull();
 
     expect(document.title).toBe('Guildhall v0.1.0 [feature-branch | :43121]');
     expect(screen.getByText('v0.1.0 · feature-branch :43121')).toBeInTheDocument();

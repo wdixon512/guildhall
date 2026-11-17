@@ -10,33 +10,22 @@ import { CouncilMember, Portrait, useMemberIdentity } from './CouncilMember';
 import type { MemberIdentity } from './CouncilMember';
 import { CouncilSidebar } from './CouncilSidebar';
 import { Icon } from './Icon';
-import { PaneResizeHandle } from './PaneResizeHandle';
 import { ProjectWorkspaceBar } from './ProjectWorkspaceBar';
+import { HealthTiersBadge } from './HealthTiersBadge';
+import { SessionToolsPane } from './SessionToolsPane';
+import type { SessionTabId } from './SessionToolsPane';
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
-import { markConversationRead, readWatermarks } from './chatPresentation';
+import { isUnread, markConversationRead, readWatermarks } from './chatPresentation';
 import { usePanelPresence } from './usePanelPresence';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import './style.css';
 
-const ContextInspector = lazy(() =>
-  import('./ContextInspector').then(module => ({ default: module.ContextInspector }))
-);
 const ConnectionsCatalog = lazy(() =>
   import('./ConnectionsCatalog').then(module => ({ default: module.ConnectionsCatalog }))
 );
-const WorktreeDiffDrawer = lazy(() =>
-  import('./WorktreeDiffDrawer').then(module => ({ default: module.WorktreeDiffDrawer }))
+const ScheduledTasksPanel = lazy(() =>
+  import('./ScheduledTasksPanel').then(module => ({ default: module.ScheduledTasksPanel }))
 );
-
-const sessionTabs = [
-  { id: 'git', label: 'Git changes', status: 'No project' },
-  { id: 'terminal', label: 'Terminal', status: 'Planned' },
-  { id: 'plan', label: 'Plan', status: 'Not linked' },
-  { id: 'context', label: 'Context usage', status: 'Live' },
-  { id: 'browser', label: 'Browser', status: 'QC harness' },
-  { id: 'side-chat', label: 'Side chat', status: 'Planned' },
-  { id: 'automations', label: 'Scheduled tasks', status: 'Disabled' },
-] as const;
 
 const toMemberIdentity = (profile: AgentProfile): MemberIdentity => ({
   name: profile.name,
@@ -134,6 +123,8 @@ export default function App() {
   const [draft, setDraft] = useState(() => draftsByKey.current.get('new:default')?.draft ?? '');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [editingQueuedRunId, setEditingQueuedRunId] = useState<string | null>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const initialCollapseApplied = useRef(false);
   const [collapsedMembers, setCollapsedMembers] = useState<Record<string, boolean>>({});
   const [instanceTag, setInstanceTag] = useState('');
   const composerInput = useRef<HTMLTextAreaElement | null>(null);
@@ -146,12 +137,12 @@ export default function App() {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [profileDrafts, setProfileDrafts] = useState<Record<string, MemberIdentity>>({});
   const profileDraftsRef = useRef<Record<string, MemberIdentity>>({});
-  const failedProfileDrafts = useRef<Record<string, { draft: MemberIdentity; retry: number }>>({});
+  const [profileToolDrafts, setProfileToolDrafts] = useState<Record<string, { enabledToolIds: string[]; permissionPolicy: string }>>({});
+  const profileToolDraftsRef = useRef<Record<string, { enabledToolIds: string[]; permissionPolicy: string }>>({});
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [profileSavingId, setProfileSavingId] = useState<string | null>(null);
   const [profileError, setProfileError] = useState('');
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
-  const [profileRetryById, setProfileRetryById] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
@@ -207,7 +198,6 @@ export default function App() {
       });
     return () => ac.abort();
   }, [activeSelectedProjectId, projects]);
-  const [, setWorkspaceRootDraft] = useState('');
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const wasWideViewport = useRef(window.innerWidth >= 900);
   const [councilWidth, setCouncilWidth] = useState(() => storedPaneWidth('guildhall.pane.council', window.innerWidth >= 1800 ? 310 : window.innerWidth >= 900 ? 290 : 260, 220, 520));
@@ -224,7 +214,7 @@ export default function App() {
     : Math.max(240, Math.min(900, viewportWidth - railWidth - effectiveCouncilWidth - 420));
   const memberPanel = usePanelPresence(showMember);
   const toolsPanel = usePanelPresence(showPreview);
-  const [previewTab, setPreviewTab] = useState<typeof sessionTabs[number]['id']>('context');
+  const [previewTab, setPreviewTab] = useState<SessionTabId>('context');
   const configuration = useRef<Bootstrap | null>(null);
   const profileMutation = useRef(false);
   const pending = useRef<AbortController | null>(null);
@@ -321,10 +311,31 @@ export default function App() {
     if (database?.status !== 'ready' || !configuration.current) return;
     const controller = new AbortController();
     void request(configuration.current, `/conversations?limit=25&archived=${showArchived}`, controller.signal).then(value => {
-      if (Array.isArray(value) && !controller.signal.aborted) setHistory(value);
+      if (Array.isArray(value) && !controller.signal.aborted) {
+        setHistory(value);
+        setHistoryLoaded(true);
+      }
     }).catch(() => {});
     return () => controller.abort();
   }, [database?.status, conversation?.conversation.id, showArchived]);
+
+  useEffect(() => {
+    if (initialCollapseApplied.current || !historyLoaded || profiles.length === 0) return;
+    initialCollapseApplied.current = true;
+    const watermarks = readWatermarks();
+    const nextCollapsed: Record<string, boolean> = {};
+    for (const profile of profiles) {
+      const hasUnreadOrActive = history.some(
+        item => item.agentDefinitionId === profile.id && (isUnread(item.lastResponseUtc, watermarks[item.id]) || !!item.hasActiveRun),
+      );
+      if (!hasUnreadOrActive) {
+        nextCollapsed[profile.id] = true;
+      }
+    }
+    if (Object.keys(nextCollapsed).length > 0) {
+      setCollapsedMembers(current => ({ ...nextCollapsed, ...current }));
+    }
+  }, [historyLoaded, profiles, history]);
 
   useEffect(() => {
     if (database?.status !== 'ready' || !configuration.current) return;
@@ -381,21 +392,41 @@ export default function App() {
     return () => controller.abort();
   }, [database?.status]);
 
+  const sameToolPolicy = (
+    aIds: string[],
+    aPolicy: string,
+    bIds: string[],
+    bPolicy: string,
+  ) => aPolicy === bPolicy && aIds.length === bIds.length && [...aIds].sort().every((v, i) => v === [...bIds].sort()[i]);
+
   const activeAgentId = conversation?.agent?.id ?? selectedAgentId;
   const activeProfile = profiles.find(profile => profile.id === activeAgentId) ?? conversation?.agent;
   const profileSaving = profileSavingId === activeProfile?.id;
-  const profileDirty = !!activeProfile && !!profileDrafts[activeProfile.id] && !profileMatchesIdentity(activeProfile, profileDrafts[activeProfile.id]);
+  const activeToolDraft = activeProfile ? profileToolDrafts[activeProfile.id] : undefined;
+  const activeToolsDirty = !!activeProfile && !!activeToolDraft && !sameToolPolicy(
+    activeToolDraft.enabledToolIds,
+    activeToolDraft.permissionPolicy,
+    activeProfile.enabledToolIds ?? ['filesystem-mcp', 'git-mcp'],
+    activeProfile.permissionPolicy ?? 'ask_unsafe',
+  );
+  const profileDirty = (!!activeProfile && !!profileDrafts[activeProfile.id] && !profileMatchesIdentity(activeProfile, profileDrafts[activeProfile.id])) || activeToolsDirty;
   const profileHasPendingChanges = (profileId: string) => {
     const profile = profiles.find(item => item.id === profileId) ?? (conversation?.agent?.id === profileId ? conversation.agent : undefined);
     const currentDraft = profileDrafts[profileId];
-    return !!profile && (!!currentDraft && !profileMatchesIdentity(profile, currentDraft) || profileSavingId === profileId);
+    const toolDraft = profileToolDrafts[profileId];
+    const toolsPending = !!profile && !!toolDraft && !sameToolPolicy(
+      toolDraft.enabledToolIds,
+      toolDraft.permissionPolicy,
+      profile.enabledToolIds ?? ['filesystem-mcp', 'git-mcp'],
+      profile.permissionPolicy ?? 'ask_unsafe',
+    );
+    return !!profile && ((!!currentDraft && !profileMatchesIdentity(profile, currentDraft)) || toolsPending || profileSavingId === profileId);
   };
   const profileErrorForActive = activeProfile ? profileErrors[activeProfile.id] || profileError : profileError;
   const updateMemberIdentity = (next: MemberIdentity) => {
     setProfileError('');
     setIdentity(next);
     if (!activeProfile) return;
-    delete failedProfileDrafts.current[activeProfile.id];
     setProfileErrors(current => { const remaining = { ...current }; delete remaining[activeProfile.id]; return remaining; });
     const updated = { ...profileDraftsRef.current, [activeProfile.id]: next };
     profileDraftsRef.current = updated;
@@ -403,58 +434,79 @@ export default function App() {
   };
   const identityForProfile = (profile: AgentProfile) => profileDraftsRef.current[profile.id] ?? toMemberIdentity(profile);
 
-  useEffect(() => {
-    if (database?.status !== 'ready' || !configuration.current || profileMutation.current) return;
-    const pendingProfiles = profiles.flatMap(profile => {
-      const currentDraft = profileDrafts[profile.id];
-      const failed = failedProfileDrafts.current[profile.id];
-      const failedAtCurrentRevision = failed && sameIdentity(failed.draft, currentDraft ?? toMemberIdentity(profile)) && failed.retry === (profileRetryById[profile.id] ?? 0);
-      return currentDraft && !profileMatchesIdentity(profile, currentDraft) && !failedAtCurrentRevision ? [{ profile, draft: currentDraft }] : [];
+  async function saveMemberProfile(targetProfile?: AgentProfile) {
+    const profile = targetProfile ?? activeProfile;
+    if (!configuration.current || !profile || profileMutation.current) return;
+    const nextDraft = profileDraftsRef.current[profile.id] ?? toMemberIdentity(profile);
+    const toolDraft = profileToolDraftsRef.current[profile.id];
+    const enabledToolIds = toolDraft?.enabledToolIds ?? profile.enabledToolIds ?? ['filesystem-mcp', 'git-mcp'];
+    const permissionPolicy = toolDraft?.permissionPolicy ?? profile.permissionPolicy ?? 'ask_unsafe';
+
+    profileMutation.current = true;
+    setProfileSavingId(profile.id);
+    setProfileError('');
+    try {
+      const updated = await request(configuration.current, `/agents/${profile.id}`, new AbortController().signal, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nextDraft.name,
+          role: nextDraft.role,
+          portraitId: nextDraft.portrait,
+          customPortrait: nextDraft.customPortrait || null,
+          accent: nextDraft.accent,
+          instructions: nextDraft.instructions,
+          defaultModelId: profile.defaultModelId,
+          defaultProviderId: profile.defaultProviderId,
+          defaultHarnessMode: profile.defaultHarnessMode,
+          enabledToolIds,
+          permissionPolicy,
+          expectedRevision: profile.revision,
+        }),
+      }) as AgentProfile;
+      setProfileErrors(current => { const remaining = { ...current }; delete remaining[profile.id]; return remaining; });
+      setProfiles(items => items.map(item => item.id === profile.id ? updated : item));
+      setConversation(current => current?.agent?.id === profile.id ? { ...current, agent: updated } : current);
+      setProfileDrafts(current => {
+        const latest = current[profile.id];
+        if (!latest || !sameIdentity(latest, nextDraft)) return current;
+        const remaining = { ...current };
+        delete remaining[profile.id];
+        profileDraftsRef.current = remaining;
+        return remaining;
+      });
+      setProfileToolDrafts(current => {
+        const remaining = { ...current };
+        delete remaining[profile.id];
+        profileToolDraftsRef.current = remaining;
+        return remaining;
+      });
+    } catch {
+      setProfileErrors(current => ({ ...current, [profile.id]: 'Could not save this guild member. Your changes are kept; retry saving.' }));
+    } finally {
+      profileMutation.current = false;
+      setProfileSavingId(null);
+    }
+  }
+
+  function discardMemberProfile() {
+    if (!activeProfile) return;
+    setProfileError('');
+    setProfileErrors(current => { const remaining = { ...current }; delete remaining[activeProfile.id]; return remaining; });
+    setProfileDrafts(current => {
+      const remaining = { ...current };
+      delete remaining[activeProfile.id];
+      profileDraftsRef.current = remaining;
+      return remaining;
     });
-    if (!pendingProfiles.length) return;
-    const timer = window.setTimeout(async () => {
-      if (profileMutation.current) return;
-      profileMutation.current = true;
-      setProfileError('');
-      try {
-        for (const { profile, draft: nextDraft } of pendingProfiles) {
-          setProfileSavingId(profile.id);
-          try {
-            const updated = await request(configuration.current!, `/agents/${profile.id}`, new AbortController().signal, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: nextDraft.name,
-                role: nextDraft.role,
-                portraitId: nextDraft.portrait,
-                customPortrait: nextDraft.customPortrait || null,
-                accent: nextDraft.accent,
-                instructions: nextDraft.instructions,
-                defaultModelId: profile.defaultModelId,
-                expectedRevision: profile.revision,
-              }),
-            }) as AgentProfile;
-            delete failedProfileDrafts.current[profile.id];
-            setProfileErrors(current => { const remaining = { ...current }; delete remaining[profile.id]; return remaining; });
-            setProfiles(items => items.map(item => item.id === profile.id ? updated : item));
-            setConversation(current => current?.agent?.id === profile.id ? { ...current, agent: updated } : current);
-            setProfileDrafts(current => {
-              const latest = current[profile.id];
-              if (!latest || !sameIdentity(latest, nextDraft)) return current;
-              const remaining = { ...current };
-              delete remaining[profile.id];
-              profileDraftsRef.current = remaining;
-              return remaining;
-            });
-          } catch {
-            failedProfileDrafts.current[profile.id] = { draft: nextDraft, retry: profileRetryById[profile.id] ?? 0 };
-            setProfileErrors(current => ({ ...current, [profile.id]: 'Could not save this guild member. The draft is kept; retry the save before sending.' }));
-          }
-        }
-      } finally { profileMutation.current = false; setProfileSavingId(null); }
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [profileDrafts, profiles, database?.status, profileRetryById, profileSavingId]);
+    setProfileToolDrafts(current => {
+      const remaining = { ...current };
+      delete remaining[activeProfile.id];
+      profileToolDraftsRef.current = remaining;
+      return remaining;
+    });
+    setIdentity(toMemberIdentity(activeProfile));
+  }
 
   const draftContextKey = (convId: string | null | undefined, agentId: string | null | undefined) =>
     convId ? `chat:${convId}` : `new:${agentId ?? 'default'}`;
@@ -509,7 +561,7 @@ export default function App() {
       const details = await request(configuration.current, `/conversations/${id}`, new AbortController().signal) as ConversationDetails;
       switchComposerContext(id, details.agent?.id ?? activeAgentId);
       setConversation(details); setChosenProvider(details.conversation.selectedProviderId ?? details.agent?.defaultProviderId ?? 'ollama'); setChosenModel(details.conversation.selectedModelId ?? ''); setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
-      setShowWorkspaceBar(false); setWorkspaceRootDraft(details.conversation.workspaceRootPath ?? '');
+      setShowWorkspaceBar(false);
       markConversationRead(id, details.conversation.lastResponseUtc); setReadState(readWatermarks());
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       setConversationMenu(null);
@@ -642,7 +694,7 @@ export default function App() {
     try {
       const profile = await request(configuration.current, '/agents', new AbortController().signal, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New guild member', role: 'Steward', portraitId: 0, customPortrait: null, accent: '#71465f', instructions: 'You are a helpful local assistant.', defaultModelId: chosenModel || null }) }) as AgentProfile;
       switchComposerContext(null, profile.id);
-      setProfiles(items => [...items, profile]); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setConversation(null); setChosenModel(profile.defaultModelId ?? chosenModel); setShowMember(true);
+      setProfiles(items => [...items, profile]); setSelectedAgentId(profile.id); setIdentity(identityForProfile(profile)); setConversation(null); setChosenModel(profile.defaultModelId ?? chosenModel); setShowPreview(false); setShowMember(true);
     } catch { setProfileError('Could not add a guild member. Check the local database permissions.'); }
     finally { chatOperation.current = false; setChatBusy(false); }
   }
@@ -708,7 +760,6 @@ export default function App() {
       setChosenModel(details.conversation.selectedModelId ?? '');
       setChosenHarnessMode(details.conversation.selectedHarnessMode ?? details.agent?.defaultHarnessMode ?? 'read_only');
       setShowWorkspaceBar(false);
-      setWorkspaceRootDraft(details.conversation.workspaceRootPath ?? '');
       if (details.agent) { setSelectedAgentId(details.agent.id); setIdentity(identityForProfile(details.agent)); }
       if (window.innerWidth < 900) setSidebarCollapsed(true);
     } catch { setChatError('Could not open chat. Check the host and database, then try again.'); }
@@ -852,45 +903,19 @@ export default function App() {
     } catch { /* Non-fatal if migration pending */ }
   }
 
-  async function updateMemberToolPolicy(enabledToolIds: string[], permissionPolicy: string) {
-    if (!configuration.current || !activeProfile || profileMutation.current) return;
-    profileMutation.current = true;
-    setProfileSavingId(activeProfile.id);
-    setProfileError('');
-    try {
-      const currentIdentity = identityForProfile(activeProfile);
-      const updated = await request(configuration.current, `/agents/${activeProfile.id}`, new AbortController().signal, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: currentIdentity.name,
-          role: currentIdentity.role,
-          portraitId: currentIdentity.portrait,
-          customPortrait: currentIdentity.customPortrait || null,
-          accent: currentIdentity.accent,
-          instructions: currentIdentity.instructions,
-          defaultModelId: activeProfile.defaultModelId,
-          defaultProviderId: activeProfile.defaultProviderId,
-          defaultHarnessMode: activeProfile.defaultHarnessMode,
-          enabledToolIds,
-          permissionPolicy,
-          expectedRevision: activeProfile.revision,
-        }),
-      }) as AgentProfile;
-      setProfiles(items => items.map(item => item.id === updated.id ? updated : item));
-      setConversation(current => current?.agent?.id === updated.id ? { ...current, agent: updated } : current);
-    } catch {
-      setProfileErrors(current => ({ ...current, [activeProfile.id]: 'Could not update MCP tool permissions.' }));
-    } finally {
-      profileMutation.current = false;
-      setProfileSavingId(null);
-    }
+  function updateMemberToolPolicy(enabledToolIds: string[], permissionPolicy: string) {
+    if (!activeProfile) return;
+    setProfileErrors(current => { const remaining = { ...current }; delete remaining[activeProfile.id]; return remaining; });
+    const updated = { ...profileToolDraftsRef.current, [activeProfile.id]: { enabledToolIds, permissionPolicy } };
+    profileToolDraftsRef.current = updated;
+    setProfileToolDrafts(updated);
   }
 
   
   async function sendMessage() {
     if (!conversation && (!activeProfile || activeProfile.isArchived)) return;
-    if (activeProfile && profileHasPendingChanges(activeProfile.id)) { setChatError('This member is still saving. Wait for the save to finish before sending.'); return; }
+    if (activeProfile && profileSavingId === activeProfile.id) { setChatError('This member is still saving. Wait for the save to finish before sending.'); return; }
+    if (activeProfile && profileHasPendingChanges(activeProfile.id)) { setChatError('Save or discard unsaved guild member changes before sending.'); return; }
     if (queuedCount >= 8 && !editingQueuedRunId) { setChatError('Eight messages are already queued. Remove one or wait for a reply.'); return; }
     const providerId = conversation?.conversation.selectedProviderId ?? chosenProvider ?? 'ollama';
     const modelId = conversation?.conversation.selectedModelId ?? chosenModel;
@@ -1022,16 +1047,6 @@ export default function App() {
       models.status === 'invalid_response' ? 'Ollama returned an invalid response.' : 'Ollama unavailable — start it separately, then refresh.';
   const selectedModelId = conversation?.conversation.selectedModelId ?? chosenModel;
   const canSend = !(!conversation && (!activeProfile || activeProfile.isArchived)) && database?.status === 'ready' && !!selectedModelId && !!models?.models.some(model => model.id === selectedModelId);
-  const sessionPanelText: Record<typeof sessionTabs[number]['id'], { title: string; detail: string }> = {
-    git: { title: 'Choose a project to see its Git changes', detail: 'Project selection will connect a local repository to this workspace. No repository is attached to this chat yet.' },
-    terminal: { title: 'Terminal is planned', detail: 'A project-scoped terminal will run locally after project access and command controls are in place.' },
-    plan: { title: 'No active plan is linked', detail: 'When Guildhall has a task plan for this session, it will appear here.' },
-    context: { title: 'Context usage is planned', detail: 'This panel will show the conversation context sent to the selected model and how much capacity remains.' },
-    browser: { title: 'Browser controls are planned', detail: 'Playwright browser interaction will appear here when the local QC harness is connected.' },
-    'side-chat': { title: 'Side chat is planned', detail: 'A separate question thread will let you ask about this session without interrupting its main conversation.' },
-    automations: { title: 'Scheduled tasks are disabled', detail: 'Local scheduled automations are planned for a later phase. They will run on this computer, with the selected agent access policy, when enabled.' },
-  };
-  const activeSessionPanel = sessionPanelText[previewTab];
 
   return (
     <main
@@ -1053,6 +1068,7 @@ export default function App() {
           <Icon name="panel" />
         </button>
         <span className="app-bar-spacer" />
+        <HealthTiersBadge config={configuration.current} hostConnected={host === 'Connected'} />
         <button className="connection-button" aria-label="Connections" title="Connections" onClick={() => { const next = !showConnections; setShowSettings(false); setShowConnections(next); if (next && !connections) void probeAllConnections(); }} aria-expanded={showConnections}>
           <span className={`dot ${host === 'Connected' ? '' : 'offline'}`} /><Icon name="connections" size={17} /><span>Connections</span>
         </button>
@@ -1063,8 +1079,26 @@ export default function App() {
       <nav className="nav-rail" aria-label="Workspace navigation">
         <button className="rail-active" aria-label="Chats" title="Chats" onClick={() => { setShowConnections(false); setShowSettings(false); }}><Icon name="chat" size={25} /></button>
         <button aria-label="Guild member appearance" title="Guild member" onClick={() => { setShowPreview(false); if (!showMember && window.innerWidth < 900) setSidebarCollapsed(true); setShowMember(value => !value); }}><Icon name="council" size={25} /></button>
-        <button disabled title="Projects — planned" aria-label="Projects — planned"><Icon name="folder" size={25} /></button>
-        <button disabled title="Scheduled tasks — planned for a later phase" aria-label="Scheduled tasks — planned"><Icon name="clock" size={25} /></button>
+        <button aria-label="Workspace projects" title="Workspace projects" aria-pressed={showWorkspaceBar} onClick={() => { setShowConnections(false); setShowSettings(false); setShowWorkspaceBar(value => !value); }}><Icon name="folder" size={25} /></button>
+        <button
+          aria-label="Scheduled tasks"
+          title="Scheduled tasks"
+          aria-pressed={showPreview && previewTab === 'automations'}
+          onClick={() => {
+            setShowConnections(false);
+            setShowSettings(false);
+            setShowMember(false);
+            if (showPreview && previewTab === 'automations') {
+              setShowPreview(false);
+            } else {
+              setPreviewTab('automations');
+              setShowPreview(true);
+              if (window.innerWidth < 900) setSidebarCollapsed(true);
+            }
+          }}
+        >
+          <Icon name="clock" size={25} />
+        </button>
         <button aria-label="Workspace settings" title="Workspace settings" aria-expanded={showSettings} onClick={() => { setShowConnections(false); setShowSettings(value => !value); }}><Icon name="shield" size={25} /></button>
         <span className="rail-spacer" /><span className="rail-local" title="Local workspace"><span className="dot" /></span>
       </nav>
@@ -1116,18 +1150,24 @@ export default function App() {
         onRequestArchiveMember={profile => { setArchiveMemberError(''); setArchiveMemberTarget(profile); }}
         onRequestDeleteMember={profile => { setDeleteMemberError(''); setDeleteMemberTarget(profile); }}
       />
-      <div className={`workspace-content ${showPreview ? 'with-preview' : ''} ${showMember ? 'with-member' : ''}`}>
+      <div className="workspace-content">
         <div id="chat-pane" className="primary-pane">
           {showConnections && (
-            <aside className="connections-panel">
+            <aside className="connections-panel" aria-label="Connections">
               <div className="toolbar">
-                <h2>Connection status</h2>
-                <button onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Refresh'}</button>
+                <div>
+                  <h2>Connection status</h2>
+                  <small>Local host, database, model providers, CLI harnesses, and MCP integrations</small>
+                </div>
+                <div className="connections-toolbar-actions">
+                  <button type="button" onClick={() => void refresh()} disabled={busy}>{busy ? 'Checking…' : 'Refresh'}</button>
+                  <button type="button" className="icon-button" aria-label="Close connections" onClick={() => setShowConnections(false)}><Icon name="close" /></button>
+                </div>
               </div>
-              <section aria-label="Connection status" aria-live="polite">
-                <article><h3>Agent host</h3><p>{host}</p><small>Authenticated connection on this computer</small></article>
-                <article><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
-                <article>
+              <section className="connections-core-grid" aria-label="Connection status" aria-live="polite">
+                <article className="connection-core-card"><h3>Agent host</h3><p>{host}</p><small>Authenticated connection on this computer</small></article>
+                <article className="connection-core-card"><h3>SQL Server</h3><p>{databaseLabel}</p><small>Dedicated application database</small></article>
+                <article className="connection-core-card">
                   <h3>Local models</h3><p>{modelLabel}</p>
                   {models?.status === 'available' && <ul>{models.models.map(model => <li key={model.id}>{model.displayName}</li>)}</ul>}
                   <small>Discovered through the agent host</small>
@@ -1158,10 +1198,7 @@ export default function App() {
                 {conversation && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setWorkspaceRootDraft(conversation.conversation.workspaceRootPath ?? '');
-                      setShowWorkspaceBar(v => !v);
-                    }}
+                    onClick={() => setShowWorkspaceBar(v => !v)}
                     aria-expanded={showWorkspaceBar}
                     title={conversation.conversation.workspaceRootPath ? `Project: ${conversation.conversation.workspaceRootPath}` : 'Choose local project folder'}
                   >
@@ -1274,10 +1311,10 @@ export default function App() {
             />
           </section>
         </div>
-        {memberPanel.present && (
+        {memberPanel.present && !showPreview && (
           <button className={`member-scrim ${memberPanel.closing ? 'panel-closing' : ''}`} tabIndex={-1} aria-label="Dismiss guild member" onClick={() => setShowMember(false)} />
         )}
-        {memberPanel.present && (
+        {memberPanel.present && !showPreview && (
           <CouncilMember
             config={configuration.current}
             profileId={activeProfile?.id}
@@ -1290,91 +1327,55 @@ export default function App() {
             onClose={() => setShowMember(false)}
             storageError={profileErrorForActive || storageError}
             saving={profileSaving}
-            enabledToolIds={activeProfile?.enabledToolIds ?? ['filesystem-mcp', 'git-mcp']}
-            permissionPolicy={activeProfile?.permissionPolicy ?? 'ask_unsafe'}
-            onUpdateToolPolicy={(enabledToolIds, permissionPolicy) => void updateMemberToolPolicy(enabledToolIds, permissionPolicy)}
-            onRetrySave={() => {
-              if (!activeProfile) return;
-              const profileId = activeProfile.id;
-              setProfileErrors(current => { const remaining = { ...current }; delete remaining[profileId]; return remaining; });
-              setProfileRetryById(current => ({ ...current, [profileId]: (current[profileId] ?? 0) + 1 }));
-            }}
+            dirty={profileDirty}
+            onSave={() => void saveMemberProfile()}
+            onDiscard={discardMemberProfile}
+            enabledToolIds={activeToolDraft?.enabledToolIds ?? activeProfile?.enabledToolIds ?? ['filesystem-mcp', 'git-mcp']}
+            permissionPolicy={activeToolDraft?.permissionPolicy ?? activeProfile?.permissionPolicy ?? 'ask_unsafe'}
+            onUpdateToolPolicy={(enabledToolIds, permissionPolicy) => updateMemberToolPolicy(enabledToolIds, permissionPolicy)}
+            onRetrySave={() => void saveMemberProfile()}
             retryAvailable={profileDirty && !!profileErrorForActive}
           />
         )}
-        {toolsPanel.present && (
-          <aside id="session-tools-pane" className={`preview-pane ${toolsPanel.closing ? 'panel-closing' : ''}`} aria-label="Session tools">
-            <PaneResizeHandle
-              className="right-pane-resizer tools-resizer"
-              label="Resize Session Tools pane"
-              controls="session-tools-pane"
-              value={Math.min(toolsPaneWidth, rightPaneResizeMax)}
-              min={240}
-              max={rightPaneResizeMax}
-              direction={-1}
-              onResize={setToolsPaneWidth}
-            />
-            <div className="pane-header">
-              <span>◫</span><h2>Session tools</h2><span className="preview-label">LOCAL WORKSPACE</span>
-              <button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button>
-            </div>
-            <div className="session-tabs" role="group" aria-label="Session tools">
-              {sessionTabs.map(tab => {
-                const status = tab.id === 'git'
-                  ? (conversation?.conversation.activeWorktreeId
-                    ? 'Worktree'
-                    : conversation?.conversation.projectId
-                      ? 'Project'
-                      : 'No project')
-                  : tab.status;
-                return (
-                  <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>
-                    {tab.label}<small>{status}</small>
-                  </button>
-                );
-              })}
-            </div>
-            {previewTab === 'context' ? (
-              <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading context inspector…</small></section>}>
-                <ContextInspector config={configuration.current} conversationId={conversation?.conversation.id ?? null} refreshToken={(conversation?.conversation.revision ?? 0) + memoryRefreshKey + (running ? 1 : 0)} />
-              </Suspense>
-            ) : previewTab === 'git' && conversation?.conversation.activeWorktreeId ? (
-              <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading diff review…</small></section>}>
-                <WorktreeDiffDrawer
+        {toolsPanel.present && !showMember && (
+          <SessionToolsPane
+            closing={toolsPanel.closing}
+            previewTab={previewTab}
+            onSelectTab={setPreviewTab}
+            onClose={() => setShowPreview(false)}
+            toolsPaneWidth={toolsPaneWidth}
+            rightPaneResizeMax={rightPaneResizeMax}
+            onResize={setToolsPaneWidth}
+            config={configuration.current}
+            conversation={conversation}
+            memoryRefreshKey={memoryRefreshKey}
+            running={running}
+            worktreeNotice={worktreeNotice}
+            automationsStatus="Live"
+            renderAutomations={() => (
+              <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading scheduled tasks…</small></section>}>
+                <ScheduledTasksPanel
                   config={configuration.current}
-                  conversationId={conversation.conversation.id}
-                  branchName={conversation.conversation.activeWorktreeBranch}
-                  onWorktreeResolved={message => {
-                    setWorktreeNotice(message);
-                    setConversation(curr => curr ? {
-                      ...curr,
-                      conversation: {
-                        ...curr.conversation,
-                        activeWorktreeId: null,
-                        activeWorktreeBranch: null,
-                        activeWorktreePath: null,
-                        revision: curr.conversation.revision + 1,
-                      },
-                    } : curr);
-                  }}
+                  profiles={profiles}
+                  projects={projects}
+                  onOpenConversation={conversationId => void openSavedChat(conversationId)}
                 />
               </Suspense>
-            ) : (
-              <section key={previewTab} className="session-placeholder">
-                <span className="session-placeholder-icon">
-                  {previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}
-                </span>
-                <span className="eyebrow">{activeSessionPanel.title}</span>
-                {previewTab === 'git' && worktreeNotice && <p role="status">{worktreeNotice}</p>}
-                <p>
-                  {previewTab === 'git' && conversation?.conversation.projectId
-                    ? 'Project attached. Click Isolate Worktree in the workspace bar to edit on an isolated Git branch and review diffs here.'
-                    : activeSessionPanel.detail}
-                </p>
-                {previewTab !== 'git' && <small>Preview only · This panel does not run commands or connect external services.</small>}
-              </section>
             )}
-          </aside>
+            onWorktreeResolved={message => {
+              setWorktreeNotice(message);
+              setConversation(curr => curr ? {
+                ...curr,
+                conversation: {
+                  ...curr.conversation,
+                  activeWorktreeId: null,
+                  activeWorktreeBranch: null,
+                  activeWorktreePath: null,
+                  revision: curr.conversation.revision + 1,
+                },
+              } : curr);
+            }}
+          />
         )}
       </div>
       <ConfirmationDialogs

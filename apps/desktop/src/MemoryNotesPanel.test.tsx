@@ -91,11 +91,11 @@ it('supports scoped memory note CRUD and search', async () => {
   fireEvent.click(screen.getAllByRole('button', { name: 'Disable' })[0]);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument());
 
-  fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[0]);
+  fireEvent.click(screen.getAllByRole('button', { name: /^Edit note:/i })[0]);
   fireEvent.change(screen.getByRole('textbox', { name: 'Edit member memory note' }), { target: { value: 'Verify SQL grants always.' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(screen.getByText('Verify SQL grants always.')).toBeInTheDocument());
 
-  fireEvent.click(screen.getAllByRole('button', { name: 'Forget' })[0]);
+  fireEvent.click(screen.getAllByRole('button', { name: /^Forget note:/i })[0]);
   await waitFor(() => expect(screen.queryByText('Verify SQL grants always.')).not.toBeInTheDocument());
 });

@@ -84,12 +84,14 @@ public sealed class ContextBuilder(
                 "settings_missing", "Guildhall behavior settings require the approved database migration.");
         }
 
+        var agentDef = conversation.AgentDefinition
+            ?? await db.AgentDefinitions.AsNoTracking().SingleAsync(x => x.Id == conversation.AgentDefinitionId, ct);
         var cache = preambleCache.Value;
         var globalGuidelines = cache.GetGlobalGuidelines();
-        var memberPreamble = cache.GetMemberPreamble(conversation.AgentDefinition.Name);
-        var instructionsSnapshot = string.IsNullOrWhiteSpace(conversation.AgentDefinition.Instructions) && memberPreamble is not null
+        var memberPreamble = cache.GetMemberPreamble(agentDef.Name);
+        var instructionsSnapshot = string.IsNullOrWhiteSpace(agentDef.Instructions) && memberPreamble is not null
             ? memberPreamble.Body
-            : conversation.AgentDefinition.Instructions;
+            : agentDef.Instructions;
 
         var notes = await db.MemoryNotes.AsNoTracking()
             .Where(x => x.IsEnabled &&
@@ -142,7 +144,7 @@ public sealed class ContextBuilder(
         var enabledToolCount = 0;
         if (mcpRegistry is not null)
         {
-            var enabledServers = ParseToolIds(conversation.AgentDefinition.EnabledToolIdsJson);
+            var enabledServers = ParseToolIds(agentDef.EnabledToolIdsJson);
             var enabledTools = await mcpRegistry.Value.GetEnabledToolsForMemberAsync(enabledServers, ct);
             enabledToolCount = enabledTools.Count;
             foreach (var tool in enabledTools)
@@ -196,19 +198,7 @@ public sealed class ContextBuilder(
             enabledToolCount);
     }
 
-    private static HashSet<string> ParseToolIds(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        try
-        {
-            var items = JsonSerializer.Deserialize<string[]>(json);
-            return items is null ? [] : new HashSet<string>(items, StringComparer.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return [];
-        }
-    }
+    private static HashSet<string> ParseToolIds(string? json) => ChatSerializationHelpers.ParseToolIds(json);
 
     public string BuildStaticSystemMessage(
         string? behavior,

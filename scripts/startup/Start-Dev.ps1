@@ -14,10 +14,29 @@ param(
     [switch]$Replace,
     [string]$WindowTag = '',
     [switch]$SkipMigrations,
-    [switch]$ApproveMigrations
+    [switch]$ApproveMigrations,
+    [switch]$AttachBackground
 )
 . "$PSScriptRoot/../misc/Common.ps1"
 if ($HostOnly -and $BuiltDesktop) { throw 'Choose HostOnly or BuiltDesktop, not both.' }
+$attachedBgHost = $false
+$bgManifestPath = Join-Path $env:LOCALAPPDATA 'Guildhall\dev\background-host.json'
+if ($AttachBackground -and (Test-Path -LiteralPath $bgManifestPath)) {
+    try {
+        $bg = Get-Content -LiteralPath $bgManifestPath -Raw | ConvertFrom-Json
+        if ($bg.pid -and (Get-Process -Id ([int]$bg.pid) -ErrorAction SilentlyContinue)) {
+            $bgTokenBytes = [System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromHexString($bg.protectedToken), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+            $bgToken = [System.Text.Encoding]::UTF8.GetString($bgTokenBytes)
+            $bgHealth = Invoke-RestMethod -Uri "$($bg.hostUrl)/health" -Headers @{ Authorization = "Bearer $bgToken" } -TimeoutSec 2
+            if ($bgHealth.status -eq 'ok') {
+                $HostPort = [int]$bg.hostPort
+                $token = $bgToken
+                $attachedBgHost = $true
+                Write-Output "Attaching desktop UI to detached background host (PID $($bg.pid), $($bg.hostUrl))."
+            }
+        }
+    } catch { Write-Warning 'Could not attach to background host; starting an owned host instead.' }
+}
 $targetPorts = if (-not $HostOnly -and -not $BuiltDesktop) { @($HostPort, $FrontendPort) } else { @($HostPort) }
 if ($Replace) {
     $conflicting = Get-RegisteredDevSessions | Where-Object {
@@ -37,14 +56,14 @@ if ($AutoPort) {
         $FrontendPort = Get-FreeLocalPort -PreferredPort $FrontendPort -ExcludePorts @($HostPort)
     }
 }
-Assert-LocalPortFree $HostPort
+if (-not $attachedBgHost) { Assert-LocalPortFree $HostPort }
 if (-not $HostOnly -and -not $BuiltDesktop) { Assert-LocalPortFree $FrontendPort }
 $hostUrl = "http://127.0.0.1:$HostPort"
 $frontendUrl = "http://127.0.0.1:$FrontendPort"
 $windowMeta = Get-InstanceWindowMetadata -HostPort $HostPort -FrontendPort $(if (-not $HostOnly -and -not $BuiltDesktop) { $FrontendPort } else { 0 }) -WindowTag $WindowTag
 $dll = Join-Path $RepoRoot 'services/agent-host/bin/Debug/net10.0/Guildhall.AgentHost.dll'
 if ($BuiltDesktop -and -not (Test-Path -LiteralPath $dll)) { throw 'Build the solution before starting development.' }
-$token = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+if (-not $attachedBgHost) { $token = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) }
 $shared = New-ChildEnvironment
 $shared['GUILDHALL_HOST_URL'] = $hostUrl
 if (-not $HostOnly -and -not $BuiltDesktop) { $shared['GUILDHALL_FRONTEND_URL'] = $frontendUrl }
@@ -77,19 +96,21 @@ $sharedManifestPath = Join-Path $SharedSessionsDirectory "$sessionId.json"
 New-Item -ItemType Directory -Path $sessionDirectory -Force | Out-Null
 try { New-Item -ItemType Directory -Path $SharedSessionsDirectory -Force -ErrorAction Stop | Out-Null } catch { }
 try {
-    $hostArguments = if ($BuiltDesktop) { @($dll) } else { @('watch', '--project', (Join-Path $RepoRoot 'services/agent-host/Guildhall.AgentHost.csproj'), 'run', '--no-launch-profile') }
-    $hostProcess = Start-OwnedChild (Get-Command dotnet).Source $hostArguments $hostEnvironment $RepoRoot
-    $deadline = [datetime]::UtcNow.AddSeconds(15)
-    $healthy = $false
-    while ([datetime]::UtcNow -lt $deadline) {
-        if ($hostProcess.HasExited) { throw 'Agent host exited during startup; inspect its sanitized error above.' }
-        try {
-            $health = Invoke-RestMethod -Uri "$hostUrl/health" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 1
-            if ($health.status -eq 'ok') { $healthy = $true; break }
-        } catch { }
-        Start-Sleep -Milliseconds 150
+    if (-not $attachedBgHost) {
+        $hostArguments = if ($BuiltDesktop) { @($dll) } else { @('watch', '--project', (Join-Path $RepoRoot 'services/agent-host/Guildhall.AgentHost.csproj'), 'run', '--no-launch-profile') }
+        $hostProcess = Start-OwnedChild (Get-Command dotnet).Source $hostArguments $hostEnvironment $RepoRoot
+        $deadline = [datetime]::UtcNow.AddSeconds(15)
+        $healthy = $false
+        while ([datetime]::UtcNow -lt $deadline) {
+            if ($hostProcess.HasExited) { throw 'Agent host exited during startup; inspect its sanitized error above.' }
+            try {
+                $health = Invoke-RestMethod -Uri "$hostUrl/health" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 1
+                if ($health.status -eq 'ok') { $healthy = $true; break }
+            } catch { }
+            Start-Sleep -Milliseconds 150
+        }
+        if (-not $healthy) { throw 'Agent host did not become healthy within 15 seconds.' }
     }
-    if (-not $healthy) { throw 'Agent host did not become healthy within 15 seconds.' }
     Write-Output 'Agent host is ready on loopback. SQL and Ollama status are reported separately.'
     if (-not $HostOnly) {
         if ($BuiltDesktop) {
@@ -156,7 +177,7 @@ try {
         mode = if ($BuiltDesktop) { 'BuiltDesktop' } elseif ($HostOnly) { 'HostOnly' } else { 'Development' }
         startedUtc = [datetime]::UtcNow.ToString('O')
         launcherPid = $PID
-        hostLauncherPid = $hostProcess.Id
+        hostLauncherPid = if ($hostProcess) { $hostProcess.Id } else { $null }
         frontendPid = if ($viteProcess) { $viteProcess.Id } else { $null }
         desktopPid = if ($desktopProcess) { $desktopProcess.Id } else { $null }
         hostPort = $HostPort
@@ -177,7 +198,7 @@ try {
     $stopAt = if ($RunForSeconds -gt 0) { [datetime]::UtcNow.AddSeconds($RunForSeconds) } else { [datetime]::MaxValue }
     $nextStatusCheck = [datetime]::MinValue
     while ([datetime]::UtcNow -lt $stopAt) {
-        if ($hostProcess.HasExited) { throw 'Agent host stopped unexpectedly.' }
+        if ($hostProcess -and $hostProcess.HasExited) { throw 'Agent host stopped unexpectedly.' }
         if ($viteProcess -and $viteProcess.HasExited) { throw 'Frontend dev server stopped unexpectedly.' }
         if ($desktopProcess -and $desktopProcess.HasExited) {
             if ($desktopProcess.ExitCode -ne 0) { throw "Desktop exited with code $($desktopProcess.ExitCode)." }

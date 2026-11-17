@@ -62,17 +62,31 @@ export function toInstructionSlug(name: string): string {
   return slug || 'guild-member';
 }
 
-const MCP_TOOL_OPTIONS = [
-  { id: 'filesystem-mcp', label: 'Local Filesystem (Tier 1/2)' },
-  { id: 'git-mcp', label: 'Local Git (Tier 1)' },
-  { id: 'workspace-exec-mcp', label: 'Workspace Commands (Tier 2)' },
-  { id: 'github-mcp', label: 'GitHub (Tier 1/3)' },
-  { id: 'google-drive-mcp', label: 'Google Drive (Tier 1)' },
-  { id: 'gmail-mcp', label: 'Gmail (Tier 1/3)' },
-  { id: 'sql-server-mcp', label: 'SQL Server Read-Only (Tier 1)' },
-] as const;
+type ToolTierGroup = 'tier1' | 'tier2' | 'tier3';
 
-export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0, enabledToolIds = ['filesystem-mcp', 'git-mcp'], permissionPolicy = 'ask_unsafe', onUpdateToolPolicy }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number; enabledToolIds?: string[]; permissionPolicy?: string; onUpdateToolPolicy?: (enabledToolIds: string[], permissionPolicy: string) => void }) {
+interface ToolOption {
+  id: string;
+  label: string;
+  tierGroup: ToolTierGroup;
+}
+
+const TOOL_GROUP_LABELS: Array<{ key: ToolTierGroup; title: string }> = [
+  { key: 'tier1', title: 'Tier 1 · Read-only' },
+  { key: 'tier2', title: 'Tier 2 · Workspace write & commands' },
+  { key: 'tier3', title: 'Tier 3 · External & remote' },
+];
+
+const MCP_TOOL_OPTIONS: ReadonlyArray<ToolOption> = [
+  { id: 'git-mcp', label: 'Local Git (Tier 1)', tierGroup: 'tier1' },
+  { id: 'google-drive-mcp', label: 'Google Drive (Tier 1)', tierGroup: 'tier1' },
+  { id: 'sql-server-mcp', label: 'SQL Server Read-Only (Tier 1)', tierGroup: 'tier1' },
+  { id: 'filesystem-mcp', label: 'Local Filesystem (Tier 1/2)', tierGroup: 'tier2' },
+  { id: 'workspace-exec-mcp', label: 'Workspace Commands (Tier 2)', tierGroup: 'tier2' },
+  { id: 'github-mcp', label: 'GitHub (Tier 1/3)', tierGroup: 'tier3' },
+  { id: 'gmail-mcp', label: 'Gmail (Tier 1/3)', tierGroup: 'tier3' },
+];
+
+export function CouncilMember({ identity, onChange, onClose, storageError, closing = false, activity = 'neutral', saving = false, dirty = false, onSave, onDiscard, onRetrySave, retryAvailable = false, resizePane, config, profileId, memoryRefreshKey = 0, enabledToolIds = ['filesystem-mcp', 'git-mcp'], permissionPolicy = 'ask_unsafe', onUpdateToolPolicy }: { identity: MemberIdentity; onChange: (value: MemberIdentity) => void; onClose: () => void; storageError: string; closing?: boolean; activity?: PortraitExpression; saving?: boolean; dirty?: boolean; onSave?: () => void; onDiscard?: () => void; onRetrySave?: () => void; retryAvailable?: boolean; resizePane?: { value: number; min: number; max: number; onResize: (value: number) => void }; config?: Bootstrap | null; profileId?: string; memoryRefreshKey?: number; enabledToolIds?: string[]; permissionPolicy?: string; onUpdateToolPolicy?: (enabledToolIds: string[], permissionPolicy: string) => void }) {
   const picker = useRef<HTMLInputElement>(null);
   const markdownPicker = useRef<HTMLInputElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -152,7 +166,7 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
     link.remove();
     URL.revokeObjectURL(url);
   }
-  const [customMcpOptions, setCustomMcpOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [customMcpOptions, setCustomMcpOptions] = useState<ToolOption[]>([]);
   useEffect(() => {
     if (!config || !profileId || !onUpdateToolPolicy) return;
     const ac = new AbortController();
@@ -162,14 +176,18 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
         setCustomMcpOptions(
           list
             .filter(s => s.isEnabled)
-            .map(s => ({ id: s.id, label: `${s.displayName} (${s.securityTier} · Remote MCP)` })),
+            .map(s => ({
+              id: s.id,
+              label: `${s.displayName} (${s.securityTier} · Remote MCP)`,
+              tierGroup: s.securityTier === 'Tier1' ? 'tier1' : s.securityTier === 'Tier2' ? 'tier2' : 'tier3',
+            })),
         );
       })
       .catch(() => { /* best effort; built-in options remain available */ });
     return () => ac.abort();
   }, [config, profileId, onUpdateToolPolicy]);
 
-  const allToolOptions = [
+  const allToolOptions: ToolOption[] = [
     ...MCP_TOOL_OPTIONS,
     ...customMcpOptions.filter(c => !MCP_TOOL_OPTIONS.some(b => b.id === c.id)),
   ];
@@ -234,24 +252,37 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
     {profileId && onUpdateToolPolicy && (
       <section className="member-section member-tools-policy" aria-label="MCP tools and permissions">
         <h3>Allowed MCP tools</h3>
-        <div className="member-tool-checks">
-          {allToolOptions.map(opt => {
-            const checked = enabledToolIds.includes(opt.id);
+        <div className="member-tool-groups">
+          {TOOL_GROUP_LABELS.map(group => {
+            const groupOptions = allToolOptions
+              .filter(opt => opt.tierGroup === group.key)
+              .sort((a, b) => a.label.localeCompare(b.label));
+            if (groupOptions.length === 0) return null;
             return (
-              <label key={opt.id} className="member-tool-check">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={saving}
-                  onChange={() => {
-                    const next = checked
-                      ? enabledToolIds.filter(id => id !== opt.id)
-                      : [...enabledToolIds, opt.id];
-                    onUpdateToolPolicy(next, permissionPolicy);
-                  }}
-                />
-                <span>{opt.label}</span>
-              </label>
+              <div key={group.key} className="member-tool-group" role="group" aria-labelledby={`member-tool-group-${group.key}`}>
+                <small id={`member-tool-group-${group.key}`} className="member-tool-group-title">{group.title}</small>
+                <div className="member-tool-checks">
+                  {groupOptions.map(opt => {
+                    const checked = enabledToolIds.includes(opt.id);
+                    return (
+                      <label key={opt.id} className="member-tool-check">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={saving}
+                          onChange={() => {
+                            const next = checked
+                              ? enabledToolIds.filter(id => id !== opt.id)
+                              : [...enabledToolIds, opt.id];
+                            onUpdateToolPolicy(next, permissionPolicy);
+                          }}
+                        />
+                        <span>{opt.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -308,6 +339,24 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
         </Suspense>
       </section>
     )}
-    <p className="member-note">This identity and its instructions belong to this guild member and are shared by its sessions.</p>{saving && <p className="member-note" role="status">Saving guild member…</p>}{storageError && <p role="alert" className="profile-error">{storageError}{retryAvailable && onRetrySave && <> <button className="profile-retry" onClick={onRetrySave}>Retry save</button></>}</p>}
+    <p className="member-note">This identity and its instructions belong to this guild member and are shared by its sessions.</p>
+    {storageError && <p role="alert" className="profile-error">{storageError}{retryAvailable && onRetrySave && <> <button type="button" className="profile-retry" onClick={onRetrySave}>Retry save</button></>}</p>}
+    {(dirty || saving || retryAvailable) && (
+      <div className="member-save-bar" role="region" aria-label="Unsaved profile changes">
+        <span className="member-dirty-indicator" role="status">
+          {saving ? 'Saving guild member…' : retryAvailable ? 'Save failed' : 'Unsaved changes'}
+        </span>
+        <div className="member-save-actions">
+          {onDiscard && !saving && (
+            <button type="button" onClick={onDiscard}>Discard</button>
+          )}
+          {onSave && (
+            <button type="button" className="primary" disabled={saving} onClick={onSave}>
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          )}
+        </div>
+      </div>
+    )}
   </aside>;
 }

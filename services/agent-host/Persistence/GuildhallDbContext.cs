@@ -257,6 +257,71 @@ public sealed class SqlMcpProfile
     public long Revision { get; set; }
 }
 
+public sealed class ScheduledAutomation
+{
+    private readonly ILazyLoader? _lazyLoader;
+    private ICollection<DurableTaskRun>? _runs;
+
+    public ScheduledAutomation() { }
+    private ScheduledAutomation(ILazyLoader lazyLoader) => _lazyLoader = lazyLoader;
+
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public Guid AgentDefinitionId { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Guid? ConversationId { get; set; }
+    public string Prompt { get; set; } = string.Empty;
+    public string CronExpression { get; set; } = "0 * * * *";
+    public string TimezoneId { get; set; } = "UTC";
+    public string MisfirePolicy { get; set; } = "RunOnce";
+    public int MaxCatchUpRuns { get; set; } = 3;
+    public int? MaxBudgetTokens { get; set; }
+    public int MaxDurationSeconds { get; set; } = 300;
+    public bool IsPaused { get; set; }
+    public DateTime? LastEvaluatedUtc { get; set; }
+    public DateTime? LastRunUtc { get; set; }
+    public DateTime? NextRunUtc { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+    public long Revision { get; set; }
+
+    public ICollection<DurableTaskRun> Runs
+    {
+        get => _lazyLoader.Load(this, ref _runs) ?? (_runs ??= []);
+        set => _runs = value;
+    }
+}
+
+public sealed class DurableTaskRun
+{
+    private readonly ILazyLoader? _lazyLoader;
+    private ScheduledAutomation? _scheduledAutomation;
+
+    public DurableTaskRun() { }
+    private DurableTaskRun(ILazyLoader lazyLoader) => _lazyLoader = lazyLoader;
+
+    public Guid Id { get; set; }
+    public Guid? ScheduledAutomationId { get; set; }
+    public Guid AgentDefinitionId { get; set; }
+    public Guid? ChatRunId { get; set; }
+    public string TriggerKind { get; set; } = "Scheduled";
+    public DateTime ScheduledForUtc { get; set; }
+    public string Status { get; set; } = "Queued";
+    public int AttemptCount { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? SummaryText { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? StartedUtc { get; set; }
+    public DateTime? FinishedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+
+    public ScheduledAutomation? ScheduledAutomation
+    {
+        get => _lazyLoader.Load(this, ref _scheduledAutomation);
+        set => _scheduledAutomation = value;
+    }
+}
+
 public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> options) : DbContext(options)
 {
     public DbSet<ApplicationMetadata> ApplicationMetadata => Set<ApplicationMetadata>();
@@ -273,6 +338,8 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
     public DbSet<ProjectWorktree> ProjectWorktrees => Set<ProjectWorktree>();
     public DbSet<ToolRollbackSnapshot> ToolRollbackSnapshots => Set<ToolRollbackSnapshot>();
     public DbSet<SqlMcpProfile> SqlMcpProfiles => Set<SqlMcpProfile>();
+    public DbSet<ScheduledAutomation> ScheduledAutomations => Set<ScheduledAutomation>();
+    public DbSet<DurableTaskRun> DurableTaskRuns => Set<DurableTaskRun>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApplicationMetadata>().ToTable("ApplicationMetadata");
@@ -380,6 +447,34 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.IsEnabled).HasDefaultValue(true);
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.HasIndex(x => x.Name).IsUnique();
+        });
+        modelBuilder.Entity<ScheduledAutomation>(e => {
+            e.ToTable("ScheduledAutomations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(120).IsRequired();
+            e.Property(x => x.Prompt).HasMaxLength(8000).IsRequired();
+            e.Property(x => x.CronExpression).HasMaxLength(100).IsRequired();
+            e.Property(x => x.TimezoneId).HasMaxLength(100).IsRequired().HasDefaultValue("UTC");
+            e.Property(x => x.MisfirePolicy).HasMaxLength(30).IsRequired().HasDefaultValue("RunOnce");
+            e.Property(x => x.MaxCatchUpRuns).HasDefaultValue(3);
+            e.Property(x => x.MaxDurationSeconds).HasDefaultValue(300);
+            e.Property(x => x.IsPaused).HasDefaultValue(false);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.IsPaused, x.NextRunUtc });
+            e.HasOne<AgentDefinition>().WithMany().HasForeignKey(x => x.AgentDefinitionId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<RegisteredProject>().WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.SetNull);
+        });
+        modelBuilder.Entity<DurableTaskRun>(e => {
+            e.ToTable("DurableTaskRuns");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TriggerKind).HasMaxLength(30).IsRequired().HasDefaultValue("Scheduled");
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired().HasDefaultValue("Queued");
+            e.Property(x => x.ErrorCode).HasMaxLength(80);
+            e.Property(x => x.SummaryText).HasMaxLength(4000);
+            e.HasIndex(x => new { x.ScheduledAutomationId, x.CreatedUtc });
+            e.HasIndex(x => new { x.Status, x.ScheduledForUtc });
+            e.HasOne(x => x.ScheduledAutomation).WithMany(x => x.Runs).HasForeignKey(x => x.ScheduledAutomationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ChatRun>().WithMany().HasForeignKey(x => x.ChatRunId).OnDelete(DeleteBehavior.SetNull);
         });
     }
 }

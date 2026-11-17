@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { HostRequestError, request } from './api';
 import type { Bootstrap, ConnectionEntry, ConnectionsCatalogData } from './api';
+import { Icon } from './Icon';
 import { openExternalLink } from './StreamingMarkdown';
 
 const PrivateInfrastructurePanel = lazy(() =>
@@ -51,7 +52,18 @@ const PILLAR_ORDER = [
   'Cloud Model APIs',
   'Local CLI Agent Harnesses',
   'MCP & Service Integrations',
-];
+] as const;
+
+type ConnectionsSection = 'all' | (typeof PILLAR_ORDER)[number] | 'private-infra';
+
+const SECTION_LABELS: Record<ConnectionsSection, string> = {
+  all: 'All',
+  'Local Runtimes': 'Local Runtimes',
+  'Cloud Model APIs': 'Cloud APIs',
+  'Local CLI Agent Harnesses': 'CLI Harnesses',
+  'MCP & Service Integrations': 'MCP & Services',
+  'private-infra': 'SQL & Network',
+};
 
 function statusClass(status: ConnectionEntry['status']): string {
   switch (status) {
@@ -86,6 +98,7 @@ export function ConnectionsCatalog({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [activeSection, setActiveSection] = useState<ConnectionsSection>('all');
 
   async function saveApiKey(id: string) {
     if (!config) return;
@@ -182,6 +195,11 @@ export function ConnectionsCatalog({
   }
 
   const entries = catalog?.entries ?? [];
+  const hasSqlMcp = entries.some(entry => entry.id === 'sql-server-mcp');
+  const visiblePillars = activeSection === 'all'
+    ? PILLAR_ORDER
+    : PILLAR_ORDER.filter(p => p === activeSection);
+  const showPrivateInfra = hasSqlMcp && (activeSection === 'all' || activeSection === 'private-infra');
 
   return (
     <section className="connection-catalog" aria-label="Backing engines and integrations">
@@ -195,14 +213,54 @@ export function ConnectionsCatalog({
         </button>
       </div>
 
+      {entries.length > 0 && (
+        <div className="connections-section-tabs" role="group" aria-label="Filter connection sections">
+          {(['all', ...PILLAR_ORDER, ...(hasSqlMcp ? (['private-infra'] as const) : [])] as ConnectionsSection[]).map(sec => {
+            const count = sec === 'all'
+              ? entries.filter(e => e.status === 'Connected').length
+              : sec === 'private-infra'
+                ? null
+                : entries.filter(e => e.pillar === sec && e.status === 'Connected').length;
+            const total = sec === 'all'
+              ? entries.length
+              : sec === 'private-infra'
+                ? null
+                : entries.filter(e => e.pillar === sec).length;
+            const countLabel = count !== null && total !== null && total > 0 ? `, ${count} of ${total} connected` : '';
+            return (
+              <button
+                key={sec}
+                type="button"
+                aria-pressed={activeSection === sec}
+                aria-label={`${SECTION_LABELS[sec]}${countLabel}`}
+                className={`connections-section-tab ${activeSection === sec ? 'selected' : ''}`}
+                onClick={() => setActiveSection(sec)}
+              >
+                <span>{SECTION_LABELS[sec]}</span>
+                {count !== null && total !== null && total > 0 && (
+                  <small aria-hidden="true">{count}/{total}</small>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {error && <p className="settings-error" role="alert">{error}</p>}
       {notice && <p className="memory-status" role="status">{notice}</p>}
 
       {!catalog && loading && <p className="memory-status">Loading connections catalog…</p>}
       {!catalog && !loading && <p className="memory-status">Connections catalog is not loaded yet. Click Probe all to load.</p>}
 
-      {PILLAR_ORDER.map(pillar => {
-        const group = entries.filter(entry => entry.pillar === pillar);
+      {visiblePillars.map(pillar => {
+        const group = entries
+          .filter(entry => entry.pillar === pillar)
+          .sort((a, b) => {
+            const aConn = a.status === 'Connected' ? 0 : 1;
+            const bConn = b.status === 'Connected' ? 0 : 1;
+            if (aConn !== bConn) return aConn - bConn;
+            return a.displayName.localeCompare(b.displayName);
+          });
         if (group.length === 0) return null;
 
         return (
@@ -239,13 +297,15 @@ export function ConnectionsCatalog({
                     ) : (
                       <div className="connection-card-actions">
                         {entry.canConfigureApiKey && !isEditing && (
-                          <button type="button" disabled={isBusy || !config} onClick={() => setEditingId(entry.id)}>
-                            {entry.keyHint ? 'Update key' : 'Add API key'}
-                          </button>
-                        )}
-                        {entry.canConfigureApiKey && entry.keyHint && !isEditing && (
-                          <button type="button" disabled={isBusy || !config} onClick={() => void deleteApiKey(entry.id)}>
-                            Remove
+                          <button
+                            type="button"
+                            className="icon-action-button"
+                            aria-label={entry.keyHint ? `Update ${entry.displayName} API key` : `Add ${entry.displayName} API key`}
+                            title={entry.keyHint ? 'Update API key' : 'Add API key'}
+                            disabled={isBusy || !config}
+                            onClick={() => setEditingId(entry.id)}
+                          >
+                            <Icon name="key" size={14} />
                           </button>
                         )}
                         {entry.engineKind === 'cli_harness' && entry.status === 'Needs sign-in' && (
@@ -254,8 +314,15 @@ export function ConnectionsCatalog({
                           </button>
                         )}
                         {entry.canProbe && (
-                          <button type="button" disabled={isBusy || !config} onClick={() => void probeOne(entry.id)}>
-                            {isBusy ? 'Checking…' : 'Test'}
+                          <button
+                            type="button"
+                            className="icon-action-button"
+                            aria-label={`Test ${entry.displayName}`}
+                            title={isBusy ? 'Checking…' : 'Test connection'}
+                            disabled={isBusy || !config}
+                            onClick={() => void probeOne(entry.id)}
+                          >
+                            <Icon name="play" size={14} />
                           </button>
                         )}
                         {entry.status === 'Unavailable' && INSTALL_GUIDES[entry.id] && (
@@ -265,6 +332,18 @@ export function ConnectionsCatalog({
                             title={INSTALL_GUIDES[entry.id].command ? `Open install page (${INSTALL_GUIDES[entry.id].command})` : 'Open official download page'}
                           >
                             Install ↗
+                          </button>
+                        )}
+                        {entry.canConfigureApiKey && entry.keyHint && !isEditing && (
+                          <button
+                            type="button"
+                            className="icon-action-button danger-button card-action-spacer"
+                            aria-label={`Remove ${entry.displayName} API key`}
+                            title="Remove API key"
+                            disabled={isBusy || !config}
+                            onClick={() => void deleteApiKey(entry.id)}
+                          >
+                            <Icon name="trash" size={14} />
                           </button>
                         )}
                       </div>
@@ -307,7 +386,7 @@ export function ConnectionsCatalog({
         );
       })}
 
-      {entries.some(entry => entry.id === 'sql-server-mcp') && (
+      {showPrivateInfra && (
         <Suspense fallback={<p className="memory-status">Loading private infrastructure…</p>}>
           <PrivateInfrastructurePanel config={config} onSqlCatalogChanged={onProbeAll} />
         </Suspense>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { request } from './api';
 import type { Bootstrap, ContextInspectorData, VramResidency } from './api';
+import { Icon } from './Icon';
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -87,8 +88,15 @@ export function ContextInspector({
           <h3>Context &amp; VRAM</h3>
           <small>Estimates use UTF-8 bytes/4; VRAM comes live from Ollama /api/ps.</small>
         </div>
-        <button type="button" onClick={() => setManualTick(value => value + 1)} disabled={!config || loading}>
-          {loading ? 'Refreshing…' : 'Refresh'}
+        <button
+          type="button"
+          className="icon-action-button"
+          aria-label="Refresh context usage"
+          title={loading ? 'Refreshing…' : 'Refresh'}
+          onClick={() => setManualTick(value => value + 1)}
+          disabled={!config || loading}
+        >
+          <Icon name="refresh" size={14} />
         </button>
       </div>
 

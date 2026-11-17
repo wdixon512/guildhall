@@ -7,6 +7,7 @@ import type {
   SqlMcpProbeResponse,
   SqlMcpProfileView,
 } from './api';
+import { Icon } from './Icon';
 
 export function PrivateInfrastructurePanel({
   config,
@@ -386,32 +387,50 @@ export function PrivateInfrastructurePanel({
                 <div className="connection-card-actions">
                   <button
                     type="button"
+                    className="icon-action-button"
                     aria-label={`Test SQL profile ${p.name}`}
+                    title={busyId === `sql-probe-${p.id}` ? 'Testing…' : 'Test connection'}
                     disabled={busyId === `sql-probe-${p.id}`}
                     onClick={() => void handleProbeSqlProfile(p.id)}
                   >
-                    {busyId === `sql-probe-${p.id}` ? 'Testing…' : 'Test'}
+                    <Icon name="play" size={14} />
                   </button>
+                  <span className="card-action-spacer" />
                   {confirmDeleteSqlId === p.id ? (
                     <>
                       <button
                         type="button"
-                        className="danger-button"
+                        className="icon-action-button danger-button"
                         aria-label={`Confirm remove SQL profile ${p.name}`}
+                        title={busyId === `sql-del-${p.id}` ? 'Removing…' : 'Confirm remove'}
                         disabled={busyId === `sql-del-${p.id}`}
                         onClick={() => void handleDeleteSqlProfile(p.id)}
                       >
-                        {busyId === `sql-del-${p.id}` ? 'Removing…' : 'Confirm remove'}
+                        <Icon name="check" size={14} />
                       </button>
-                      <button type="button" onClick={() => setConfirmDeleteSqlId(null)}>Cancel</button>
+                      <button
+                        type="button"
+                        className="icon-action-button"
+                        aria-label="Cancel remove"
+                        title="Cancel"
+                        onClick={() => {
+                          setConfirmDeleteSqlId(null);
+                          requestAnimationFrame(() => document.getElementById(`sql-del-${p.id}`)?.focus());
+                        }}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
                     </>
                   ) : (
                     <button
+                      id={`sql-del-${p.id}`}
                       type="button"
+                      className="icon-action-button danger-button"
                       aria-label={`Remove SQL profile ${p.name}`}
+                      title="Remove SQL profile"
                       onClick={() => setConfirmDeleteSqlId(p.id)}
                     >
-                      Remove
+                      <Icon name="trash" size={14} />
                     </button>
                   )}
                 </div>
@@ -538,32 +557,50 @@ export function PrivateInfrastructurePanel({
                 <div className="connection-card-actions">
                   <button
                     type="button"
+                    className="icon-action-button"
                     aria-label={`Test remote MCP ${s.displayName}`}
+                    title={busyId === `mcp-probe-${s.id}` ? 'Testing…' : 'Test connection'}
                     disabled={busyId === `mcp-probe-${s.id}`}
                     onClick={() => void handleProbeRemoteMcp(s.id)}
                   >
-                    {busyId === `mcp-probe-${s.id}` ? 'Testing…' : 'Test'}
+                    <Icon name="play" size={14} />
                   </button>
+                  <span className="card-action-spacer" />
                   {confirmDeleteMcpId === s.id ? (
                     <>
                       <button
                         type="button"
-                        className="danger-button"
+                        className="icon-action-button danger-button"
                         aria-label={`Confirm remove remote MCP ${s.displayName}`}
+                        title={busyId === `mcp-del-${s.id}` ? 'Removing…' : 'Confirm remove'}
                         disabled={busyId === `mcp-del-${s.id}`}
                         onClick={() => void handleDeleteRemoteMcp(s.id)}
                       >
-                        {busyId === `mcp-del-${s.id}` ? 'Removing…' : 'Confirm remove'}
+                        <Icon name="check" size={14} />
                       </button>
-                      <button type="button" onClick={() => setConfirmDeleteMcpId(null)}>Cancel</button>
+                      <button
+                        type="button"
+                        className="icon-action-button"
+                        aria-label="Cancel remove"
+                        title="Cancel"
+                        onClick={() => {
+                          setConfirmDeleteMcpId(null);
+                          requestAnimationFrame(() => document.getElementById(`mcp-del-${s.id}`)?.focus());
+                        }}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
                     </>
                   ) : (
                     <button
+                      id={`mcp-del-${s.id}`}
                       type="button"
+                      className="icon-action-button danger-button"
                       aria-label={`Remove remote MCP ${s.displayName}`}
+                      title="Remove remote MCP"
                       onClick={() => setConfirmDeleteMcpId(s.id)}
                     >
-                      Remove
+                      <Icon name="trash" size={14} />
                     </button>
                   )}
                 </div>

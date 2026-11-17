@@ -92,3 +92,8 @@ Additional November 16 owner follow-ups ([docs/2026-11-16.md](../2026-11-16.md))
 ## November 17 Phase 4 Post-QC UX Follow-Up
 
 - **Git Changes / Worktree Diff View Redesign (Deferred to later phase):** By owner direction after Phase 4 QC sign-off, revisit and redesign the **Git changes / Worktree diff review** panel (`WorktreeDiffDrawer`) for richer ergonomics (per-file collapsible diff accordions, side-by-side or split diff toggle, line-level revision comments, and one-click open worktree folder in File Explorer).
+
+## November 17 Phase 6 Post-Implementation Roadmap Notes (Deferred Until All Implementation Phases Complete)
+
+- **Detached Session Memory / Message Transplant Across Sessions (Phase 7+ / Post-Phase):** By owner direction after testing scheduled task **Open session**, support detaching a message, run output, or curated memory slice from one session (such as a scheduled task run or archived chat) and pasting/attaching it directly into another currently-open session as a scoped context block, without switching away from the active conversation.
+- **Prompt Engineering & Grounded Tool-Evidence Pass (Post-Phase Quality Work):** By owner direction after observing `Krug` (`qwen3:4b`) report fabricated `git log` / release tag results with "Confidence: 95%" despite `workspace_run_command` failing, run a dedicated prompt-engineering pass over Council Member preambles and global system instructions—strengthening tool-failure handling, prohibiting fabricated tool output/metrics when a tool call fails or was not executed, and tuning small-model instruction adherence.

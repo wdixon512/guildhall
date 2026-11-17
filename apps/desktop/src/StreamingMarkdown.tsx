@@ -95,6 +95,36 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text, streami
     return () => cancelAnimationFrame(frame);
   }, [text, streaming]);
 
+const CALLOUT_TAG_LABELS: Record<string, string> = {
+  error: 'Error',
+  warning: 'Warning',
+  caution: 'Caution',
+  important: 'Important',
+  note: 'Note',
+  tip: 'Tip',
+  info: 'Info',
+};
+
+function formatModelCalloutTags(text: string): string {
+  // Preserve fenced code blocks and inline code spans verbatim.
+  return text
+    .split(/(```[\s\S]*?```|`[^`\n]+`)/g)
+    .map((segment, index) => {
+      if (index % 2 === 1) return segment;
+      return segment.replace(
+        /<(error|warning|caution|important|note|tip|info)>([\s\S]*?)<\/\1>/gi,
+        (_, tag: string, body: string) => {
+          const label = CALLOUT_TAG_LABELS[tag.toLowerCase()] ?? tag;
+          const lines = body.trim().split('\n').map(line => `> ${line}`).join('\n');
+          return `\n> **${label}:**\n${lines}\n`;
+        },
+      );
+    })
+    .join('');
+}
+
+  const formattedVisible = formatModelCalloutTags(visible);
+
   return <div><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
     img: ({ alt }) => <span className="remote-image-blocked">Image not loaded{alt ? `: ${alt}` : ''}</span>,
     a: ({ href, children }) => {
@@ -103,5 +133,5 @@ export const StreamingMarkdown = memo(function StreamingMarkdown({ text, streami
       return <a href={safeUrl} target="_blank" rel="noopener noreferrer" onClick={event => { event.preventDefault(); void openExternalLink(safeUrl); }}>{children}</a>;
     },
     pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-  }}>{visible}</ReactMarkdown></div>;
+  }}>{formattedVisible}</ReactMarkdown></div>;
 });

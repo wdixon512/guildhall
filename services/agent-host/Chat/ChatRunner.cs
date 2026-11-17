@@ -20,7 +20,8 @@ public sealed class ChatRunner(
     McpRegistry? mcpRegistry = null,
     ToolPermissionGate? permissionGate = null,
     ExfiltrationGuard? exfiltrationGuard = null,
-    ToolRollbackService? rollbackService = null) : BackgroundService
+    ToolRollbackService? rollbackService = null,
+    ChatRecoveryService? recoveryService = null) : BackgroundService
 {
     private const int MaxToolRounds = 6;
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> active = new();
@@ -28,7 +29,8 @@ public sealed class ChatRunner(
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     public SemaphoreSlim MutationGate { get; } = new(1, 1);
     private CancellationToken hostStopping;
-    private readonly DateTime hostStartedUtc = DateTime.UtcNow;
+    private readonly DateTime hostStartedUtc = timeProvider.GetUtcNow().UtcDateTime;
+    private readonly ChatRecoveryService recovery = recoveryService ?? new ChatRecoveryService(factory, timeProvider);
 
     public void Start(Guid runId)
     {
@@ -40,7 +42,7 @@ public sealed class ChatRunner(
         hostStopping = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await ChatRecovery.ReconcileAsync(factory, hostStartedUtc, stoppingToken); break; }
+            try { await recovery.ReconcileAsync(hostStartedUtc, stoppingToken); break; }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch { logger.LogWarning("Chat recovery is waiting for the database."); }
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
@@ -60,9 +62,10 @@ public sealed class ChatRunner(
                         runId = await db.ChatRuns.Where(x => x.Status == ChatRunStatus.Queued && !db.ChatRuns.Any(prior => prior.ConversationId == x.ConversationId && prior.Status == ChatRunStatus.Queued && prior.TurnNumber < x.TurnNumber))
                             .OrderBy(x => x.StartedUtc).ThenBy(x => x.TurnNumber).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(stoppingToken);
                         if (runId is null) break;
+                        var now = timeProvider.GetUtcNow().UtcDateTime;
                         var claimed = await db.ChatRuns.Where(x => x.Id == runId && x.Status == ChatRunStatus.Queued)
                             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, ChatRunStatus.Running)
-                                .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.UpdatedUtc, DateTime.UtcNow), stoppingToken);
+                                .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.UpdatedUtc, now), stoppingToken);
                         if (claimed == 0) continue;
                     }
                     finally { MutationGate.Release(); }
@@ -85,15 +88,16 @@ public sealed class ChatRunner(
     public async Task<bool> CancelAsync(Guid runId, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
         var removed = await db.ChatRuns.Where(x => x.Id == runId && x.Status == ChatRunStatus.Queued)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, ChatRunStatus.Cancelled)
-                .SetProperty(x => x.ErrorCode, "queue_cancelled").SetProperty(x => x.FinishedUtc, DateTime.UtcNow)
-                .SetProperty(x => x.UpdatedUtc, DateTime.UtcNow).SetProperty(x => x.Sequence, x => x.Sequence + 1), ct);
+                .SetProperty(x => x.ErrorCode, "queue_cancelled").SetProperty(x => x.FinishedUtc, now)
+                .SetProperty(x => x.UpdatedUtc, now).SetProperty(x => x.Sequence, x => x.Sequence + 1), ct);
         if (removed > 0) return true;
         // A committed terminal state wins over a later cancellation request.
         var changed = await db.ChatRuns.Where(x => x.Id == runId && x.Status == ChatRunStatus.Running)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, ChatRunStatus.Cancelling)
-                .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.UpdatedUtc, DateTime.UtcNow), ct);
+                .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.UpdatedUtc, now), ct);
         if (active.TryGetValue(runId, out var source))
         {
             try { source.Cancel(); } catch (ObjectDisposedException) { }
@@ -103,8 +107,8 @@ public sealed class ChatRunner(
             // This host has no worker for the persisted run; there is nothing to resume.
             await db.ChatRuns.Where(x => x.Id == runId && x.Status == ChatRunStatus.Cancelling)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, ChatRunStatus.Cancelled)
-                    .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.FinishedUtc, DateTime.UtcNow)
-                    .SetProperty(x => x.UpdatedUtc, DateTime.UtcNow), ct);
+                    .SetProperty(x => x.Sequence, x => x.Sequence + 1).SetProperty(x => x.FinishedUtc, now)
+                    .SetProperty(x => x.UpdatedUtc, now), ct);
         }
         return changed > 0 || await db.ChatRuns.AnyAsync(x => x.Id == runId, ct);
     }
@@ -330,7 +334,7 @@ public sealed class ChatRunner(
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var now = DateTime.UtcNow;
+        var now = timeProvider.GetUtcNow().UtcDateTime;
         var changed = await db.ChatRuns.Where(x => x.Id == id && x.Status == ChatRunStatus.Running)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Sequence, x => x.Sequence + 1)
                 .SetProperty(x => x.UpdatedUtc, now), cancellationToken);
@@ -487,19 +491,7 @@ public sealed class ChatRunner(
             : ("unknown", qualifiedName);
     }
 
-    private static HashSet<string> ParseToolIds(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return [];
-        try
-        {
-            var items = JsonSerializer.Deserialize<string[]>(json);
-            return items is null ? [] : new HashSet<string>(items, StringComparer.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return [];
-        }
-    }
+    private static HashSet<string> ParseToolIds(string? json) => ChatSerializationHelpers.ParseToolIds(json);
 
     private static bool TryReadTextAttachment(ChatAttachment attachment, out string text)
     {
@@ -512,12 +504,7 @@ public sealed class ChatRunner(
         return true;
     }
 
-    private static bool IsSupportedImage(byte[] content) =>
-        content.Length >= 12 &&
-        ((content.AsSpan().StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })) ||
-         (content[0] == 0xFF && content[1] == 0xD8 && content[^2] == 0xFF && content[^1] == 0xD9) ||
-         System.Text.Encoding.ASCII.GetString(content, 0, 4) == "RIFF" && System.Text.Encoding.ASCII.GetString(content, 8, 4) == "WEBP" ||
-         System.Text.Encoding.ASCII.GetString(content, 0, 3) == "GIF");
+    private static bool IsSupportedImage(byte[] content) => ChatSerializationHelpers.IsSupportedImage(content);
 
     private async Task FinishAsync(
         Guid id,
