@@ -51,6 +51,13 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .HasColumnType("nvarchar(50)")
                         .HasDefaultValue("ollama");
 
+                    b.Property<string>("EnabledToolIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)")
+                        .HasDefaultValue("[\"filesystem-mcp\",\"git-mcp\"]");
+
                     b.Property<string>("Instructions")
                         .IsRequired()
                         .HasMaxLength(8192)
@@ -65,6 +72,13 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("PermissionPolicy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasDefaultValue("ask_unsafe");
 
                     b.Property<int>("PortraitId")
                         .HasColumnType("int");
@@ -254,6 +268,75 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.ToTable("ChatRuns", (string)null);
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatRunEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ArgumentsRedactedJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ResultRedactedJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SecurityTier")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("Tier1");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ServerId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Running");
+
+                    b.Property<string>("ToolName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "SequenceNumber")
+                        .IsUnique();
+
+                    b.ToTable("ChatRunEvents", (string)null);
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.Conversation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -271,6 +354,10 @@ namespace Guildhall.AgentHost.Persistence.Migrations
 
                     b.Property<bool>("IsArchived")
                         .HasColumnType("bit");
+
+                    b.Property<string>("PermissionPolicyOverride")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
 
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
@@ -295,6 +382,10 @@ namespace Guildhall.AgentHost.Persistence.Migrations
 
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("WorkspaceRootPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.HasKey("Id");
 
@@ -322,6 +413,64 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("GuildhallBehaviorSettings", (string)null);
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.McpServerRegistration", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<string>("ArgumentsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)")
+                        .HasDefaultValue("[]");
+
+                    b.Property<string>("Command")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("EndpointUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SecurityTier")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("Tier3");
+
+                    b.Property<string>("Transport")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("McpServerRegistrations", (string)null);
                 });
 
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.MemoryNote", b =>
@@ -403,6 +552,17 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Navigation("Conversation");
                 });
 
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatRunEvent", b =>
+                {
+                    b.HasOne("Guildhall.AgentHost.Persistence.ChatRun", "Run")
+                        .WithMany("Events")
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Run");
+                });
+
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.Conversation", b =>
                 {
                     b.HasOne("Guildhall.AgentHost.Persistence.AgentDefinition", "AgentDefinition")
@@ -431,6 +591,8 @@ namespace Guildhall.AgentHost.Persistence.Migrations
 
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatRun", b =>
                 {
+                    b.Navigation("Events");
+
                     b.Navigation("Messages");
                 });
 

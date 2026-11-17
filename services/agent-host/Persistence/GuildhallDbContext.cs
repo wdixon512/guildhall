@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Guildhall.AgentHost.Persistence;
 
@@ -28,6 +29,8 @@ public sealed class AgentDefinition
     public string DefaultProviderId { get; set; } = "ollama";
     public string? DefaultModelId { get; set; }
     public string? DefaultHarnessMode { get; set; }
+    public string EnabledToolIdsJson { get; set; } = "[\"filesystem-mcp\",\"git-mcp\"]";
+    public string PermissionPolicy { get; set; } = "ask_unsafe";
     public long Revision { get; set; }
 }
 
@@ -39,6 +42,8 @@ public sealed class Conversation
     public string? SelectedProviderId { get; set; }
     public string? SelectedModelId { get; set; }
     public string? SelectedHarnessMode { get; set; }
+    public string? WorkspaceRootPath { get; set; }
+    public string? PermissionPolicyOverride { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
     public bool IsArchived { get; set; }
@@ -75,6 +80,7 @@ public sealed class ChatRun
     public string? SettingsSnapshotJson { get; set; }
     public Conversation Conversation { get; set; } = null!;
     public List<ChatMessage> Messages { get; set; } = [];
+    public List<ChatRunEvent> Events { get; set; } = [];
 }
 
 public enum ChatMessageRole { User, Assistant }
@@ -116,6 +122,51 @@ public sealed class MemoryNote
     public AgentDefinition? AgentDefinition { get; set; }
 }
 
+public sealed class ChatRunEvent
+{
+    private readonly ILazyLoader? _lazyLoader;
+    private ChatRun? _run;
+
+    public ChatRunEvent() { }
+    private ChatRunEvent(ILazyLoader lazyLoader) => _lazyLoader = lazyLoader;
+
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public int SequenceNumber { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public string ServerId { get; set; } = string.Empty;
+    public string ToolName { get; set; } = string.Empty;
+    public string SecurityTier { get; set; } = "Tier1";
+    public string Status { get; set; } = "Running";
+    public string ArgumentsRedactedJson { get; set; } = "{}";
+    public string? ResultRedactedJson { get; set; }
+    public string? ErrorCode { get; set; }
+    public long? DurationMs { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? CompletedUtc { get; set; }
+
+    public ChatRun Run
+    {
+        get => _lazyLoader.Load(this, ref _run)!;
+        set => _run = value;
+    }
+}
+
+public sealed class McpServerRegistration
+{
+    public string Id { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Transport { get; set; } = "stdio";
+    public string? Command { get; set; }
+    public string ArgumentsJson { get; set; } = "[]";
+    public string? EndpointUrl { get; set; }
+    public string SecurityTier { get; set; } = "Tier3";
+    public bool IsEnabled { get; set; } = true;
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+    public long Revision { get; set; }
+}
+
 public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> options) : DbContext(options)
 {
     public DbSet<ApplicationMetadata> ApplicationMetadata => Set<ApplicationMetadata>();
@@ -126,6 +177,8 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
     public DbSet<MemoryNote> MemoryNotes => Set<MemoryNote>();
+    public DbSet<ChatRunEvent> ChatRunEvents => Set<ChatRunEvent>();
+    public DbSet<McpServerRegistration> McpServerRegistrations => Set<McpServerRegistration>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApplicationMetadata>().ToTable("ApplicationMetadata");
@@ -138,10 +191,10 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
         modelBuilder.Entity<AgentDefinition>(e => {
             e.ToTable("AgentDefinitions"); e.HasKey(x => x.Id); e.Property(x => x.Name).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(100).IsRequired(); e.Property(x => x.PortraitId).IsRequired(); e.Property(x => x.CustomPortrait).HasColumnType("nvarchar(max)"); e.Property(x => x.Accent).HasMaxLength(7).IsRequired(); e.Property(x => x.IsArchived).HasDefaultValue(false);
-            e.Property(x => x.Instructions).HasMaxLength(8192).IsRequired(); e.Property(x => x.DefaultProviderId).HasMaxLength(50).IsRequired().HasDefaultValue("ollama"); e.Property(x => x.DefaultModelId).HasMaxLength(200); e.Property(x => x.DefaultHarnessMode).HasMaxLength(30); e.Property(x => x.Revision).IsConcurrencyToken();
+            e.Property(x => x.Instructions).HasMaxLength(8192).IsRequired(); e.Property(x => x.DefaultProviderId).HasMaxLength(50).IsRequired().HasDefaultValue("ollama"); e.Property(x => x.DefaultModelId).HasMaxLength(200); e.Property(x => x.DefaultHarnessMode).HasMaxLength(30); e.Property(x => x.EnabledToolIdsJson).HasMaxLength(2000).IsRequired().HasDefaultValue("[\"filesystem-mcp\",\"git-mcp\"]"); e.Property(x => x.PermissionPolicy).HasMaxLength(40).IsRequired().HasDefaultValue("ask_unsafe"); e.Property(x => x.Revision).IsConcurrencyToken();
         });
         modelBuilder.Entity<Conversation>(e => {
-            e.ToTable("Conversations"); e.HasKey(x => x.Id); e.Property(x => x.Title).HasMaxLength(200).IsRequired(); e.Property(x => x.SelectedProviderId).HasMaxLength(50); e.Property(x => x.SelectedModelId).HasMaxLength(200); e.Property(x => x.SelectedHarnessMode).HasMaxLength(30);
+            e.ToTable("Conversations"); e.HasKey(x => x.Id); e.Property(x => x.Title).HasMaxLength(200).IsRequired(); e.Property(x => x.SelectedProviderId).HasMaxLength(50); e.Property(x => x.SelectedModelId).HasMaxLength(200); e.Property(x => x.SelectedHarnessMode).HasMaxLength(30); e.Property(x => x.WorkspaceRootPath).HasMaxLength(500); e.Property(x => x.PermissionPolicyOverride).HasMaxLength(40);
             e.HasIndex(x => new { x.UpdatedUtc, x.Id }); e.HasOne(x => x.AgentDefinition).WithMany().HasForeignKey(x => x.AgentDefinitionId).OnDelete(DeleteBehavior.Restrict); e.Property(x => x.Revision).IsConcurrencyToken();
         });
         modelBuilder.Entity<ChatRun>(e => {
@@ -160,6 +213,33 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.Revision).IsConcurrencyToken();
             e.HasIndex(x => new { x.Scope, x.AgentDefinitionId, x.IsEnabled, x.UpdatedUtc });
             e.HasOne(x => x.AgentDefinition).WithMany().HasForeignKey(x => x.AgentDefinitionId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ChatRunEvent>(e => {
+            e.ToTable("ChatRunEvents");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.EventType).HasMaxLength(40).IsRequired();
+            e.Property(x => x.ServerId).HasMaxLength(80).IsRequired();
+            e.Property(x => x.ToolName).HasMaxLength(120).IsRequired();
+            e.Property(x => x.SecurityTier).HasMaxLength(20).IsRequired().HasDefaultValue("Tier1");
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired().HasDefaultValue("Running");
+            e.Property(x => x.ArgumentsRedactedJson).HasColumnType("nvarchar(max)").IsRequired();
+            e.Property(x => x.ResultRedactedJson).HasColumnType("nvarchar(max)");
+            e.Property(x => x.ErrorCode).HasMaxLength(80);
+            e.HasIndex(x => new { x.RunId, x.SequenceNumber }).IsUnique();
+            e.HasOne(x => x.Run).WithMany(x => x.Events).HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<McpServerRegistration>(e => {
+            e.ToTable("McpServerRegistrations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(80);
+            e.Property(x => x.DisplayName).HasMaxLength(120).IsRequired();
+            e.Property(x => x.Transport).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Command).HasMaxLength(500);
+            e.Property(x => x.ArgumentsJson).HasMaxLength(2000).IsRequired().HasDefaultValue("[]");
+            e.Property(x => x.EndpointUrl).HasMaxLength(500);
+            e.Property(x => x.SecurityTier).HasMaxLength(20).IsRequired().HasDefaultValue("Tier3");
+            e.Property(x => x.IsEnabled).HasDefaultValue(true);
+            e.Property(x => x.Revision).IsConcurrencyToken();
         });
     }
 }

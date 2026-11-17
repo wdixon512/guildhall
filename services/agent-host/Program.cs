@@ -6,6 +6,7 @@ using Guildhall.AgentHost.Providers.Cli;
 using Guildhall.AgentHost.Providers.Cloud;
 using Guildhall.AgentHost.Providers.Ollama;
 using Guildhall.AgentHost.Chat;
+using Guildhall.AgentHost.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -51,6 +52,9 @@ builder.Services.AddHttpClient("gemini-api", http => { http.BaseAddress = new Ur
 builder.Services.AddHttpClient("anthropic-api", http => { http.BaseAddress = new Uri("https://api.anthropic.com"); http.Timeout = TimeSpan.FromMinutes(5); }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
 builder.Services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
 builder.Services.AddSingleton<EnvironmentScrubber>();
+builder.Services.AddSingleton<WorkspacePathGuard>();
+builder.Services.AddSingleton<ExfiltrationGuard>();
+builder.Services.AddSingleton<ToolPermissionGate>();
 builder.Services.AddSingleton<ICliProcessRunner, CliProcessRunner>();
 builder.Services.AddSingleton<IBackingEngine, OllamaBackingEngine>();
 builder.Services.AddSingleton<IBackingEngine, OpenAiCloudEngine>();
