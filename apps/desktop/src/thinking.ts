@@ -22,3 +22,14 @@ export function splitThinking(text: string, streaming = false) {
   if (inside) thinking += tail; else answer += tail;
   return { answer: answer.trim(), thinking: thinking.trim(), marked, pending: inside };
 }
+
+/** Summarize the latest active line of model thinking for compact live display. */
+export function summarizeThinking(thinking: string): string {
+  const lines = thinking
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*(?:#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s*)+/, '').replace(/[*_`]+/g, '').trim())
+    .filter(line => line.length >= 4);
+  const latest = lines.at(-1)?.replace(/\s+/g, ' ').trim();
+  if (!latest) return 'Thinking';
+  return latest.length > 64 ? `${latest.slice(0, 63).trimEnd()}…` : latest;
+}

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { StreamingMarkdown } from './StreamingMarkdown';
-import { splitThinking } from './thinking';
+import { splitThinking, summarizeThinking } from './thinking';
+import { formatWorkedDuration } from './chatPresentation';
 import { PaneResizeHandle } from './PaneResizeHandle';
 
-export function AssistantResponse({ text, streaming }: { text: string; streaming: boolean }) {
+export function AssistantResponse({ text, streaming, durationSeconds }: { text: string; streaming: boolean; durationSeconds?: number | null }) {
   const parts = splitThinking(text, streaming);
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState(440);
@@ -18,13 +19,29 @@ export function AssistantResponse({ text, streaming }: { text: string; streaming
     return () => window.removeEventListener('resize', resize);
   }, []);
   useEffect(() => {
-    if (open) dialog.current?.showModal();
+    if (open && dialog.current && !dialog.current.open) dialog.current.showModal();
   }, [open]);
   function close() { dialog.current?.close(); setOpen(false); trigger.current?.focus(); }
+  const isThinkingLive = streaming && parts.pending;
+  const workedLabel = !streaming ? formatWorkedDuration(durationSeconds) : null;
   return <>
-    {parts.marked && <button ref={trigger} className="thinking-toggle" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>{streaming && parts.pending ? 'Thinking…' : 'View thinking'} <span aria-hidden="true">↗</span></button>}
-    {parts.answer ? <StreamingMarkdown text={parts.answer} streaming={streaming} /> : parts.marked && <p className="thinking-status">{streaming ? 'Waiting for the answer…' : 'No answer text was returned.'}</p>}
-    {open && createPortal(<dialog ref={dialog} className="thinking-pane" aria-label="Model thinking" style={{ width: Math.min(width, max) }} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
+    {isThinkingLive ? (
+      <button ref={trigger} className="thinking-toggle is-thinking" aria-haspopup="dialog" aria-expanded={open} title="View live thinking" onClick={() => setOpen(true)}>
+        <span className="thinking-summary-wrap"><span className="thinking-summary">{summarizeThinking(parts.thinking)}</span><span className="waiting-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
+        <span className="thinking-chevron" aria-hidden="true">›</span>
+      </button>
+    ) : parts.marked ? (
+      <button ref={trigger} className="thinking-toggle" aria-haspopup="dialog" aria-expanded={open} title={workedLabel ? `${workedLabel} — view full thinking` : 'View full thinking'} onClick={() => setOpen(true)}>
+        <span className="thinking-summary">{workedLabel ?? 'View thinking'}</span>
+        <span className="thinking-chevron" aria-hidden="true">›</span>
+      </button>
+    ) : workedLabel ? (
+      <span className="thinking-toggle static" title="Includes time waiting in the queue">
+        <span className="thinking-summary">{workedLabel}</span>
+      </span>
+    ) : null}
+    {parts.answer ? <StreamingMarkdown text={parts.answer} streaming={streaming} /> : !streaming && parts.marked && <p className="thinking-status">No answer text was returned.</p>}
+    {open && createPortal(<dialog ref={dialog} className="thinking-pane" aria-label="Model thinking" style={{ width: Math.min(width, max) }} onCancel={event => { event.preventDefault(); close(); }} onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
       <PaneResizeHandle className="thinking-resizer" label="Resize thinking pane" controls="thinking-content" value={Math.min(width, max)} min={Math.min(240, max)} max={max} direction={-1} onResize={setWidth} />
       <header><h2>Model thinking</h2><button autoFocus aria-label="Close thinking pane" onClick={close}>×</button></header>
       <p className="thinking-note">Model-generated reasoning may contain mistakes. {streaming && parts.pending ? 'Still receiving thinking.' : ''}</p>
