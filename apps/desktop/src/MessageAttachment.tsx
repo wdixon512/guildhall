@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { requestBlob } from './api';
 import type { Attachment, Bootstrap } from './api';
+import { formatAttachmentSize } from './chatPresentation';
 
 export function MessageAttachment({ attachment, config }: { attachment: Attachment; config: Bootstrap | null }) {
   const [url, setUrl] = useState('');
@@ -15,7 +16,7 @@ export function MessageAttachment({ attachment, config }: { attachment: Attachme
     }).catch(() => { if (!controller.signal.aborted) setPreviewFailed(true); });
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [attachment.id, config, isImage]);
-  const size = attachment.length < 1024 * 1024 ? `${Math.max(1, Math.round(attachment.length / 1024))} KB` : `${(attachment.length / (1024 * 1024)).toFixed(1)} MB`;
+  const size = formatAttachmentSize(attachment.length);
   async function download() {
     if (!config) return;
     setDownloadFailed(false);

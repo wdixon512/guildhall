@@ -1,5 +1,11 @@
 import type { AgentProfile, MessageView } from './api';
 
+export function formatAttachmentSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function formatResponseDuration(seconds?: number | null): string | null {
   if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 1) return `Response time: ${Math.round(seconds * 1000)} ms`;
@@ -20,12 +26,12 @@ export function waitingMessages(name: string, model?: string | null): string[] {
   const member = name.trim() || 'The guild member';
   const selectedModel = model?.trim();
   return [
-    `${member}'s reply is in progress.`,
-    selectedModel ? `Waiting for ${selectedModel} to return the first text.` : 'Waiting for the model to return the first text.',
-    'The response will appear here as it arrives.',
-    'No response text has arrived yet.',
-    'You can keep browsing while this reply runs.',
-    'Guildhall is waiting for the next response update.',
+    `${member}'s reply is in progress`,
+    selectedModel ? `Waiting for ${selectedModel} to return the first text` : 'Waiting for the model to return the first text',
+    'The response will appear here as it arrives',
+    'No response text has arrived yet',
+    'You can keep browsing while this reply runs',
+    'Guildhall is waiting for the next response update',
   ];
 }
 
