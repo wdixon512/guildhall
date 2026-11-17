@@ -17,4 +17,12 @@ public sealed record ConversationResponse(ConversationSummary Conversation, IRea
 public sealed record CreateMessageRequest(string ClientRequestId, long ExpectedConversationRevision, string Text, string DeliveryMode = "queue");
 public sealed record PromoteRunRequest(long ExpectedConversationRevision);
 public sealed record RunAcceptedResponse(Guid RunId, Guid AssistantMessageId, long ConversationRevision);
+public sealed record PreambleSummary(string Key, string ContentHash, long ByteCount, DateTimeOffset LoadedUtc, IReadOnlyDictionary<string, string> Metadata, string Body);
+public sealed record PreambleCacheSnapshotResponse(long CurrentCacheBytes, long MaxCacheBytes, int Count, IReadOnlyList<PreambleSummary> Entries);
+public sealed record MemoryNoteResponse(Guid Id, string Scope, Guid? AgentDefinitionId, string Body, bool IsEnabled, Guid? SourceConversationId, DateTime CreatedUtc, DateTime UpdatedUtc, long Revision);
+public sealed record CreateMemoryNoteRequest(string Scope, Guid? AgentDefinitionId, string Body, bool IsEnabled = true, Guid? SourceConversationId = null);
+public sealed record UpdateMemoryNoteRequest(string? Body, bool? IsEnabled, long ExpectedRevision);
+public sealed record ContextMemoryNoteRef(Guid Id, string Scope, long Revision, int EstimatedTokens, string Preview);
+public sealed record CrossTurnBudgetSummary(int EstimatedSessionTokens, int MaxSessionTokens, int EstimatedNextTurnTokens, int MaxTurnContextTokens, int CompletedTurns, bool IsOverTurnLimit, bool IsOverSessionBudget);
+public sealed record ContextInspectorResponse(Guid ConversationId, Guid AgentDefinitionId, string MemberName, string? ModelId, int BehaviorRevision, int BehaviorChars, string? GlobalGuidelinesHash, int GlobalGuidelinesChars, int MemberInstructionsChars, IReadOnlyList<ContextMemoryNoteRef> MemoryNotes, int RetainedHistoryTurns, int RetainedHistoryChars, CrossTurnBudgetSummary Budget, VramResidencyResponse Vram);
 public sealed record ErrorResponse(string Code, string Message);

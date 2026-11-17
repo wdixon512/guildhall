@@ -5,6 +5,8 @@ param(
     [switch]$BuiltDesktop,
     [switch]$UseGpu,
     [ValidateRange(0,900)][int]$KeepModelWarmSeconds = 0,
+    [ValidateRange(512,131072)][int]$MaxTurnContextTokens = 32768,
+    [ValidateRange(1024,524288)][int]$MaxSessionTokens = 131072,
     [ValidateRange(1,120)][int]$RunForSeconds = 0,
     [ValidateRange(1024,65535)][int]$HostPort = 43120,
     [ValidateRange(1024,65535)][int]$FrontendPort = 1420,
@@ -45,15 +47,17 @@ if ($BuiltDesktop -and -not (Test-Path -LiteralPath $dll)) { throw 'Build the so
 $token = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 $shared = New-ChildEnvironment
 $shared['GUILDHALL_HOST_URL'] = $hostUrl
-$shared['GUILDHALL_FRONTEND_URL'] = $frontendUrl
+if (-not $HostOnly -and -not $BuiltDesktop) { $shared['GUILDHALL_FRONTEND_URL'] = $frontendUrl }
 $shared['GUILDHALL_SESSION_TOKEN'] = $token
 $shared['GUILDHALL_WINDOW_TITLE'] = $windowMeta.WindowTitle
 $shared['GUILDHALL_INSTANCE_TAG'] = $windowMeta.InstanceTag
 $hostEnvironment = $shared.Clone()
 $hostEnvironment['GUILDHALL_USE_GPU'] = if ($UseGpu) { 'true' } else { 'false' }
 $hostEnvironment['GUILDHALL_MODEL_KEEP_ALIVE_SECONDS'] = [string]$KeepModelWarmSeconds
+$hostEnvironment['CrossTurnBudget__MaxTurnContextTokens'] = [string]$MaxTurnContextTokens
+$hostEnvironment['CrossTurnBudget__MaxSessionTokens'] = [string]$MaxSessionTokens
 Write-Output "Window: $($windowMeta.WindowTitle)"
-Write-Output "Inference mode: $(if ($UseGpu) { 'GPU automatic offload' } else { 'CPU only, 4 threads' }); model retention after replies: $KeepModelWarmSeconds seconds; host: $hostUrl$(if (-not $HostOnly -and -not $BuiltDesktop) { "; frontend: $frontendUrl" })."
+Write-Output "Inference mode: $(if ($UseGpu) { 'GPU automatic offload' } else { 'CPU only, 4 threads' }); model retention after replies: $KeepModelWarmSeconds seconds; context window: $MaxTurnContextTokens tokens (session cap: $MaxSessionTokens); host: $hostUrl$(if (-not $HostOnly -and -not $BuiltDesktop) { "; frontend: $frontendUrl" })."
 $hostEnvironment['GUILDHALL_OLLAMA_URL'] = if ($env:GUILDHALL_OLLAMA_URL) { $env:GUILDHALL_OLLAMA_URL } else { 'http://127.0.0.1:11434' }
 $runtimeConnection = Get-LocalSqlConnection -Runtime
 if ($runtimeConnection) {
@@ -91,7 +95,7 @@ try {
         if ($BuiltDesktop) {
             $desktopExecutable = Join-Path $RepoRoot 'apps/desktop/src-tauri/target/debug/guildhall-desktop.exe'
             if (-not (Test-Path -LiteralPath $desktopExecutable)) { throw 'Build the embedded desktop with: npm.cmd --prefix apps/desktop run tauri -- build --debug --no-bundle' }
-            $desktopProcess = Start-OwnedChild $desktopExecutable @() $shared
+            $desktopProcess = Start-OwnedChild $desktopExecutable @() $shared -ShowWindow
         } else {
         # Own Vite directly: a Tauri beforeDevCommand can outlive its parent on Windows.
         # Vite receives build environment only, without the session token or SQL credentials.
@@ -113,7 +117,7 @@ try {
             # Reuse the already-built dev binary from a per-session copy so Cargo does not fail trying to relink a locked .exe.
             $sessionDesktopExecutable = Join-Path $sessionDirectory 'guildhall-desktop.exe'
             Copy-Item -LiteralPath $builtDevBinary -Destination $sessionDesktopExecutable -Force
-            $desktopProcess = Start-OwnedChild $sessionDesktopExecutable @() $shared
+            $desktopProcess = Start-OwnedChild $sessionDesktopExecutable @() $shared -ShowWindow
         } else {
         # Launch the JS CLI directly, without shell expansion or secret-bearing arguments.
         $cli = Join-Path $RepoRoot 'apps/desktop/node_modules/@tauri-apps/cli/tauri.js'

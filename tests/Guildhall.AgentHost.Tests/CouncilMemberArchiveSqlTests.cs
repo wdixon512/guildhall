@@ -78,7 +78,7 @@ public sealed class CouncilMemberArchiveSqlTests
             foreach (var table in tables) snapshots.Add(table, await Snapshot(table));
             await using (var upgrade = new GuildhallDbContext(options))
             {
-                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings" }, await upgrade.Database.GetPendingMigrationsAsync());
+                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings", "20261116232856_MemoryNotes" }, await upgrade.Database.GetPendingMigrationsAsync());
                 await upgrade.Database.MigrateAsync();
                 await upgrade.Database.MigrateAsync();
                 Assert.Empty(await upgrade.Database.GetPendingMigrationsAsync());

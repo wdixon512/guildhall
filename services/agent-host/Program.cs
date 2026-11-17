@@ -14,6 +14,16 @@ builder.Host.UseDefaultServiceProvider(options =>
 });
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddTransient(typeof(Lazy<>), typeof(Lazier<>));
+builder.Services.AddOptions<PreambleCacheOptions>()
+    .BindConfiguration("PreambleCache")
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<IPreambleCacheService, PreambleCacheService>();
+builder.Services.AddOptions<CrossTurnBudgetOptions>()
+    .BindConfiguration("CrossTurnBudget")
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<IContextBuilder, ContextBuilder>();
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 54 * 1024 * 1024);
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 53 * 1024 * 1024);
 // Avoid framework request/SQL logging accidentally recording sensitive configuration.

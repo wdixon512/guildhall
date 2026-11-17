@@ -4,10 +4,11 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Guildhall.AgentHost.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Guildhall.AgentHost.Chat;
 
-public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IHttpClientFactory clients, ILogger<ChatRunner> logger, IConfiguration configuration) : BackgroundService
+public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IHttpClientFactory clients, ILogger<ChatRunner> logger, IConfiguration configuration, Lazy<IContextBuilder> contextBuilder, IOptionsMonitor<CrossTurnBudgetOptions> budgetOptions) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> active = new();
     private readonly Channel<bool> wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
@@ -109,8 +110,21 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
             {
                 using var snapshot = JsonDocument.Parse(settings);
                 if (snapshot.RootElement.TryGetProperty("interruptedRunId", out var value) && value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var id)) interruptedRunId = id;
-                if (snapshot.RootElement.TryGetProperty("guildhallBehavior", out var behavior) && behavior.ValueKind == JsonValueKind.String)
-                    instructions = behavior.GetString() + "\n\nMember instructions:\n" + instructions;
+                string? behaviorText = snapshot.RootElement.TryGetProperty("guildhallBehavior", out var behavior) && behavior.ValueKind == JsonValueKind.String ? behavior.GetString() : null;
+                string? guidelinesText = snapshot.RootElement.TryGetProperty("globalGuidelines", out var guidelines) && guidelines.ValueKind == JsonValueKind.String ? guidelines.GetString() : null;
+                var memoryNotes = new List<(string Scope, string Body)>();
+                if (snapshot.RootElement.TryGetProperty("memoryNotes", out var notesProp) && notesProp.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var noteEl in notesProp.EnumerateArray())
+                    {
+                        var scope = noteEl.TryGetProperty("Scope", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+                        var body = noteEl.TryGetProperty("Body", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(scope) && !string.IsNullOrWhiteSpace(body))
+                            memoryNotes.Add((scope, body));
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(behaviorText) || !string.IsNullOrWhiteSpace(guidelinesText) || memoryNotes.Count > 0)
+                    instructions = contextBuilder.Value.BuildStaticSystemMessage(behaviorText, guidelinesText, instructions, memoryNotes);
             }
             var priorRuns = await db.ChatRuns.AsNoTracking()
                 .Where(x => x.ConversationId == run.ConversationId && x.TurnNumber < run.TurnNumber && (x.Status == ChatRunStatus.Completed || x.Id == interruptedRunId))
@@ -152,7 +166,7 @@ public sealed class ChatRunner(IDbContextFactory<GuildhallDbContext> factory, IH
                     throw new InvalidOperationException("model_does_not_support_images");
             }
             var useGpu = configuration.GetValue<bool>("GUILDHALL_USE_GPU");
-            var options = new Dictionary<string, object> { ["num_thread"] = 4, ["num_ctx"] = 4096 };
+            var options = new Dictionary<string, object> { ["num_thread"] = 4, ["num_ctx"] = budgetOptions.CurrentValue.MaxTurnContextTokens };
             if (!useGpu) options["num_gpu"] = 0;
             // Request-local settings: do not change the shared Ollama service or other clients.
             // Avoid spending CPU on a hidden reasoning stream before the visible answer.

@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Guildhall.AgentHost.Persistence;
 using Guildhall.AgentHost.Chat;
+using Guildhall.AgentHost.Providers.Ollama;
 
 namespace Guildhall.AgentHost.Api;
 
@@ -16,6 +17,170 @@ public static class ChatEndpoints
 
     public static void MapChat(this WebApplication app)
     {
+        app.MapGet("/vram", (OllamaDiscovery discovery, IConfiguration configuration, CancellationToken ct) =>
+        {
+            var useGpu = configuration.GetValue<bool>("GUILDHALL_USE_GPU");
+            var keepAlive = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
+            return discovery.GetRunningModelsAsync(useGpu, keepAlive, ct);
+        });
+        app.MapGet("/conversations/{id:guid}/context", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, IContextBuilder contextBuilder, OllamaDiscovery discovery, IConfiguration configuration, CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var conversation = await db.Conversations.AsNoTracking().Include(x => x.AgentDefinition).SingleOrDefaultAsync(x => x.Id == id, ct);
+            if (conversation is null) return Results.NotFound();
+
+            var assembly = await contextBuilder.InspectAsync(db, conversation, incomingUserText: null, interruptedRunId: null, ct);
+            if (assembly.ErrorCode == "settings_missing")
+                return Results.Conflict(new ErrorResponse("settings_missing", assembly.ErrorMessage!));
+
+            var useGpu = configuration.GetValue<bool>("GUILDHALL_USE_GPU");
+            var keepAlive = Math.Clamp(configuration.GetValue<int>("GUILDHALL_MODEL_KEEP_ALIVE_SECONDS"), 0, 900);
+            var vram = await discovery.GetRunningModelsAsync(useGpu, keepAlive, ct);
+            var noteRefs = assembly.MemoryNotes.Select(x => new ContextMemoryNoteRef(
+                x.Id,
+                x.Scope,
+                x.Revision,
+                x.EstimatedTokens,
+                x.Body.Length > 120 ? x.Body[..120] + "…" : x.Body)).ToList();
+
+            return Results.Ok(new ContextInspectorResponse(
+                conversation.Id,
+                conversation.AgentDefinitionId,
+                conversation.AgentDefinition.Name,
+                conversation.SelectedModelId,
+                assembly.BehaviorRevision,
+                assembly.BehaviorInstructions.Length,
+                assembly.GlobalGuidelinesHash,
+                assembly.GlobalGuidelinesBody?.Length ?? 0,
+                assembly.InstructionsSnapshot.Length,
+                noteRefs,
+                assembly.RetainedHistoryTurns,
+                assembly.RetainedHistoryChars,
+                assembly.Budget,
+                vram));
+        });
+        app.MapGet("/preambles", (Lazy<IPreambleCacheService> preambleCache) =>
+        {
+            var cache = preambleCache.Value;
+            var entries = cache.ListAll()
+                .Select(x => new PreambleSummary(x.Key, x.ContentHash, x.ByteCount, x.LoadedUtc, x.Metadata, x.Body))
+                .ToList();
+            return Results.Ok(new PreambleCacheSnapshotResponse(cache.CurrentCacheBytes, cache.MaxCacheBytes, cache.Count, entries));
+        });
+        app.MapGet("/memory-notes", async (string? scope, Guid? agentDefinitionId, string? query, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            IQueryable<MemoryNote> notes = db.MemoryNotes.AsNoTracking();
+            if (string.Equals(scope, "AboutYou", StringComparison.OrdinalIgnoreCase))
+            {
+                notes = notes.Where(x => x.Scope == MemoryNoteScope.AboutYou);
+            }
+            else if (string.Equals(scope, "Member", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!agentDefinitionId.HasValue || agentDefinitionId.Value == Guid.Empty)
+                    return Results.BadRequest(new ErrorResponse("invalid_scope", "Member notes require an agentDefinitionId."));
+                notes = notes.Where(x => x.Scope == MemoryNoteScope.Member && x.AgentDefinitionId == agentDefinitionId.Value);
+            }
+            else if (!string.IsNullOrWhiteSpace(scope))
+            {
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou or Member."));
+            }
+            else if (agentDefinitionId.HasValue && agentDefinitionId.Value != Guid.Empty)
+            {
+                notes = notes.Where(x => x.Scope == MemoryNoteScope.AboutYou || (x.Scope == MemoryNoteScope.Member && x.AgentDefinitionId == agentDefinitionId.Value));
+            }
+            else
+            {
+                notes = notes.Where(x => x.Scope == MemoryNoteScope.AboutYou);
+            }
+
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                var term = query.Trim();
+                notes = notes.Where(x => x.Body.Contains(term));
+            }
+
+            var items = await notes
+                .OrderByDescending(x => x.UpdatedUtc)
+                .ThenBy(x => x.Id)
+                .Take(200)
+                .Select(x => new MemoryNoteResponse(x.Id, x.Scope.ToString(), x.AgentDefinitionId, x.Body, x.IsEnabled, x.SourceConversationId, x.CreatedUtc, x.UpdatedUtc, x.Revision))
+                .ToListAsync(ct);
+            return Results.Ok(items);
+        });
+        app.MapPost("/memory-notes", async (CreateMemoryNoteRequest request, IDbContextFactory<GuildhallDbContext> factory, TimeProvider timeProvider, CancellationToken ct) =>
+        {
+            if (!Enum.TryParse<MemoryNoteScope>(request.Scope, ignoreCase: true, out var parsedScope) || !Enum.IsDefined(parsedScope))
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou or Member."));
+            var body = request.Body?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(body) || body.Length > 2000)
+                return Results.BadRequest(new ErrorResponse("invalid_memory_body", "Memory note body must contain 1–2000 characters."));
+            if (parsedScope == MemoryNoteScope.AboutYou && request.AgentDefinitionId.HasValue)
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Shared AboutYou notes cannot belong to a specific member."));
+            if (parsedScope == MemoryNoteScope.Member && (!request.AgentDefinitionId.HasValue || request.AgentDefinitionId.Value == Guid.Empty))
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Private Member notes require a guild member."));
+
+            await using var db = await factory.CreateDbContextAsync(ct);
+            if (parsedScope == MemoryNoteScope.Member && !await db.AgentDefinitions.AsNoTracking().AnyAsync(x => x.Id == request.AgentDefinitionId!.Value, ct))
+                return Results.NotFound(new ErrorResponse("member_not_found", "Guild member was not found."));
+            if (request.SourceConversationId.HasValue && !await db.Conversations.AsNoTracking().AnyAsync(x => x.Id == request.SourceConversationId.Value, ct))
+                return Results.BadRequest(new ErrorResponse("conversation_not_found", "Source conversation was not found."));
+
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            var note = new MemoryNote
+            {
+                Id = Guid.NewGuid(),
+                Scope = parsedScope,
+                AgentDefinitionId = parsedScope == MemoryNoteScope.Member ? request.AgentDefinitionId : null,
+                Body = body,
+                IsEnabled = request.IsEnabled,
+                SourceConversationId = request.SourceConversationId,
+                CreatedUtc = now,
+                UpdatedUtc = now,
+                Revision = 1
+            };
+            db.MemoryNotes.Add(note);
+            await db.SaveChangesAsync(ct);
+            return Results.Created($"/memory-notes/{note.Id}", ToMemoryNote(note));
+        });
+        app.MapPatch("/memory-notes/{id:guid}", async (Guid id, UpdateMemoryNoteRequest request, IDbContextFactory<GuildhallDbContext> factory, TimeProvider timeProvider, CancellationToken ct) =>
+        {
+            if (request.Body is null && request.IsEnabled is null)
+                return Results.BadRequest(new ErrorResponse("invalid_request", "Specify body or enabled state to update."));
+            string? trimmedBody = null;
+            if (request.Body is not null)
+            {
+                trimmedBody = request.Body.Trim();
+                if (string.IsNullOrWhiteSpace(trimmedBody) || trimmedBody.Length > 2000)
+                    return Results.BadRequest(new ErrorResponse("invalid_memory_body", "Memory note body must contain 1–2000 characters."));
+            }
+
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var note = await db.MemoryNotes.SingleOrDefaultAsync(x => x.Id == id, ct);
+            if (note is null) return Results.NotFound();
+            if (note.Revision != request.ExpectedRevision)
+                return Results.Conflict(new ErrorResponse("revision_conflict", "Memory note changed; refresh and retry."));
+
+            if (trimmedBody is not null) note.Body = trimmedBody;
+            if (request.IsEnabled.HasValue) note.IsEnabled = request.IsEnabled.Value;
+            note.UpdatedUtc = timeProvider.GetUtcNow().UtcDateTime;
+            note.Revision++;
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateConcurrencyException) { return Results.Conflict(new ErrorResponse("revision_conflict", "Memory note changed; refresh and retry.")); }
+            return Results.Ok(ToMemoryNote(note));
+        });
+        app.MapDelete("/memory-notes/{id:guid}", async (Guid id, long expectedRevision, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
+        {
+            await using var db = await factory.CreateDbContextAsync(ct);
+            var note = await db.MemoryNotes.SingleOrDefaultAsync(x => x.Id == id, ct);
+            if (note is null) return Results.NotFound();
+            if (note.Revision != expectedRevision)
+                return Results.Conflict(new ErrorResponse("revision_conflict", "Memory note changed; refresh and retry."));
+            db.MemoryNotes.Remove(note);
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateConcurrencyException) { return Results.Conflict(new ErrorResponse("revision_conflict", "Memory note changed; refresh and retry.")); }
+            return Results.NoContent();
+        });
         app.MapGet("/guildhall-behavior", async (IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
@@ -237,7 +402,7 @@ public static class ChatEndpoints
             var contentType = Microsoft.Net.Http.Headers.MediaTypeHeaderValue.TryParse(attachment.ContentType, out var parsed) ? parsed.ToString() : "application/octet-stream";
             return Results.File(attachment.Content, contentType, attachment.FileName, enableRangeProcessing: false);
         });
-        app.MapPost("/conversations/{id:guid}/messages", async (Guid id, HttpRequest http, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, CancellationToken ct) =>
+        app.MapPost("/conversations/{id:guid}/messages", async (Guid id, HttpRequest http, IDbContextFactory<GuildhallDbContext> factory, ChatRunner runner, IContextBuilder contextBuilder, CancellationToken ct) =>
         {
             string clientRequestId; long expectedRevision; string text; string deliveryMode = "queue"; var uploaded = new List<(string Name, string Type, byte[] Content)>();
             if (http.HasFormContentType)
@@ -289,15 +454,46 @@ public static class ChatEndpoints
                 if (await db.ChatRuns.CountAsync(x => x.ConversationId == id && x.Status == ChatRunStatus.Queued, ct) >= 8)
                     return Results.Conflict(new ErrorResponse("queue_full", "This session has eight queued messages. Remove a queued message or wait for a reply."));
                 var interrupted = deliveryMode == "send_now" ? await db.ChatRuns.Where(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling)).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct) : null;
-                var behavior = await db.GuildhallBehaviorSettings.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1, ct);
-                if (behavior is null) return Results.Conflict(new ErrorResponse("settings_missing", "Guildhall behavior settings require the approved database migration."));
+                var assembly = await contextBuilder.InspectAsync(db, conversation, text, interrupted, ct);
+                if (assembly.ErrorCode is not null)
+                {
+                    return assembly.ErrorCode is "settings_missing" or "cross_turn_budget_exceeded"
+                        ? Results.Conflict(new ErrorResponse(assembly.ErrorCode, assembly.ErrorMessage!))
+                        : Results.BadRequest(new ErrorResponse(assembly.ErrorCode, assembly.ErrorMessage!));
+                }
+                var settingsJson = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    deliveryMode,
+                    interruptedRunId = interrupted,
+                    guildhallBehaviorRevision = assembly.BehaviorRevision,
+                    guildhallBehavior = assembly.BehaviorInstructions,
+                    globalGuidelinesHash = assembly.GlobalGuidelinesHash,
+                    globalGuidelines = assembly.GlobalGuidelinesBody,
+                    memberPreambleHash = assembly.MemberPreambleHash,
+                    memoryNotes = assembly.MemoryNotes.Select(x => new { x.Id, x.Scope, x.Revision, x.Body }),
+                    budget = assembly.Budget
+                });
+                if (settingsJson.Length > 4000)
+                {
+                    settingsJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        deliveryMode,
+                        interruptedRunId = interrupted,
+                        guildhallBehaviorRevision = assembly.BehaviorRevision,
+                        guildhallBehavior = assembly.BehaviorInstructions,
+                        globalGuidelinesHash = assembly.GlobalGuidelinesHash,
+                        memberPreambleHash = assembly.MemberPreambleHash,
+                        memoryNoteIds = assembly.MemoryNotes.Select(x => new { x.Id, x.Scope, x.Revision }),
+                        budget = assembly.Budget
+                    });
+                }
                 var now = DateTime.UtcNow;
                 var turn = await db.ChatRuns.Where(x => x.ConversationId == id).Select(x => (int?)x.TurnNumber).MaxAsync(ct) ?? 0;
                 var run = new ChatRun { Id = Guid.NewGuid(), ConversationId = id, TurnNumber = turn + 1,
                     ClientRequestId = clientRequestId, RequestFingerprint = fingerprint, Status = ChatRunStatus.Queued,
-                    StartedUtc = now, UpdatedUtc = now, InstructionsSnapshot = conversation.AgentDefinition.Instructions,
+                    StartedUtc = now, UpdatedUtc = now, InstructionsSnapshot = assembly.InstructionsSnapshot,
                     ModelId = conversation.SelectedModelId, ProviderId = "ollama",
-                    SettingsSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new { deliveryMode, interruptedRunId = interrupted, guildhallBehaviorRevision = behavior.Revision, guildhallBehavior = behavior.Instructions }) };
+                    SettingsSnapshotJson = settingsJson };
                 var userMessage = new ChatMessage { Id = Guid.NewGuid(), Role = ChatMessageRole.User, Text = text ?? string.Empty };
                 foreach (var item in uploaded) userMessage.Attachments.Add(new ChatAttachment { Id = Guid.NewGuid(), FileName = item.Name, ContentType = item.Type, Length = item.Content.LongLength, Content = item.Content });
                 run.Messages.Add(userMessage);
@@ -332,6 +528,7 @@ public static class ChatEndpoints
     }
     private static AssistantResponse ToResponse(AgentDefinition x) => new(x.Id, x.Name, x.Instructions, x.DefaultModelId, x.Revision);
     private static AgentProfileResponse ToProfile(AgentDefinition x) => new(x.Id, x.Name, x.Role, x.PortraitId, x.CustomPortrait, x.Accent, x.Instructions, x.DefaultModelId, x.Revision, x.IsArchived);
+    private static MemoryNoteResponse ToMemoryNote(MemoryNote x) => new(x.Id, x.Scope.ToString(), x.AgentDefinitionId, x.Body, x.IsEnabled, x.SourceConversationId, x.CreatedUtc, x.UpdatedUtc, x.Revision);
     private static string? ValidateProfile(string name, string role, int portraitId, string? customPortrait, string accent, string instructions, string? defaultModelId)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 40) return "Guild member names must be 1–40 characters.";
