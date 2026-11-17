@@ -460,7 +460,8 @@ describe('connection status', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Workspace settings' }));
     expect(await screen.findByRole('heading', { name: 'Workspace settings' })).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Display scale' })).toHaveValue('100');
-    expect(screen.getByRole('button', { name: 'Always ask' })).toBeDisabled();
+    expect(screen.getByRole('group', { name: 'Workspace agent access override' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unrestricted · danger' })).toBeInTheDocument();
     expect(screen.getByText(/no provider usage data is connected/i)).toBeInTheDocument();
   });
 

@@ -343,6 +343,9 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("ActiveWorktreeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid>("AgentDefinitionId")
                         .HasColumnType("uniqueidentifier");
 
@@ -358,6 +361,9 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Property<string>("PermissionPolicyOverride")
                         .HasMaxLength(40)
                         .HasColumnType("nvarchar(40)");
+
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
@@ -401,6 +407,10 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Property<int>("Id")
                         .HasColumnType("int");
 
+                    b.Property<string>("DefaultWorktreeRootPath")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
                     b.Property<string>("Instructions")
                         .IsRequired()
                         .HasMaxLength(4000)
@@ -409,6 +419,10 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
+
+                    b.Property<string>("WorkspacePolicyOverride")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
 
                     b.HasKey("Id");
 
@@ -495,6 +509,9 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
 
+                    b.Property<Guid?>("ProjectId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
@@ -514,9 +531,157 @@ namespace Guildhall.AgentHost.Persistence.Migrations
 
                     b.HasIndex("AgentDefinitionId");
 
-                    b.HasIndex("Scope", "AgentDefinitionId", "IsEnabled", "UpdatedUtc");
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("Scope", "AgentDefinitionId", "ProjectId", "IsEnabled", "UpdatedUtc");
 
                     b.ToTable("MemoryNotes", (string)null);
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ProjectWorktree", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BaseCommitSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("BranchName")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Active");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("WorktreePath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId");
+
+                    b.HasIndex("ConversationId", "Status");
+
+                    b.ToTable("ProjectWorktrees", (string)null);
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.RegisteredProject", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DefaultBranch")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<bool>("IsGitRepository")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("LastOpenedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RootPath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RootPath")
+                        .IsUnique();
+
+                    b.ToTable("RegisteredProjects", (string)null);
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ToolRollbackSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PostStateRef")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreStateRef")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("RolledBackUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("RunEventId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("Available");
+
+                    b.Property<string>("Strategy")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("TargetPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid?>("WorktreeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "RunEventId");
+
+                    b.ToTable("ToolRollbackSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatAttachment", b =>
@@ -581,7 +746,25 @@ namespace Guildhall.AgentHost.Persistence.Migrations
                         .HasForeignKey("AgentDefinitionId")
                         .OnDelete(DeleteBehavior.Cascade);
 
+                    b.HasOne("Guildhall.AgentHost.Persistence.RegisteredProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.Navigation("AgentDefinition");
+
+                    b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.ProjectWorktree", b =>
+                {
+                    b.HasOne("Guildhall.AgentHost.Persistence.RegisteredProject", "Project")
+                        .WithMany("Worktrees")
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.ChatMessage", b =>
@@ -599,6 +782,11 @@ namespace Guildhall.AgentHost.Persistence.Migrations
             modelBuilder.Entity("Guildhall.AgentHost.Persistence.Conversation", b =>
                 {
                     b.Navigation("Runs");
+                });
+
+            modelBuilder.Entity("Guildhall.AgentHost.Persistence.RegisteredProject", b =>
+                {
+                    b.Navigation("Worktrees");
                 });
 #pragma warning restore 612, 618
         }

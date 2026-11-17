@@ -29,17 +29,32 @@ public sealed class LocalFilesystemMcpProvider(WorkspacePathGuard pathGuard) : I
             "fs_search_files",
             "Search for a plain case-insensitive substring (not regex) across text files in the authorized workspace folder (read-only).",
             """{"type":"object","properties":{"pattern":{"type":"string","description":"Plain substring to search for (do not regex-escape dots or slashes)."},"subPath":{"type":"string","description":"Optional directory relative to workspace root (e.g. 'docs/masterplan'; default '.')."}},"required":["pattern"]}"""),
+        CreateDescriptor(
+            "fs_write_file",
+            "Create or overwrite a UTF-8 text file inside the authorized workspace folder (Tier 2: workspace write).",
+            """{"type":"object","properties":{"path":{"type":"string","description":"Relative file path inside workspace."},"content":{"type":"string","description":"Full UTF-8 file content to write."}},"required":["path","content"]}""",
+            ToolSecurityTiers.Tier2),
+        CreateDescriptor(
+            "fs_edit_file",
+            "Replace a unique exact text block inside an existing UTF-8 file in the authorized workspace folder (Tier 2: workspace write).",
+            """{"type":"object","properties":{"path":{"type":"string","description":"Relative file path inside workspace."},"target":{"type":"string","description":"Exact existing text to replace (must occur once)."},"replacement":{"type":"string","description":"Replacement text."}},"required":["path","target","replacement"]}""",
+            ToolSecurityTiers.Tier2),
+        CreateDescriptor(
+            "fs_delete_file",
+            "Delete a file inside the authorized workspace folder (Tier 2: workspace write).",
+            """{"type":"object","properties":{"path":{"type":"string","description":"Relative file path inside workspace."}},"required":["path"]}""",
+            ToolSecurityTiers.Tier2),
     ];
 
     public string ServerId => "filesystem-mcp";
-    public string DisplayName => "Local Filesystem (Read-Only)";
+    public string DisplayName => "Local Filesystem (Read & Write)";
     public string Transport => "builtin";
     public string DefaultSecurityTier => ToolSecurityTiers.Tier1;
 
     public IReadOnlyList<McpToolDescriptor> GetTools() => Tools;
 
     public Task<(bool Healthy, string? Detail)> ProbeAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<(bool, string?)>((true, "Built-in read-only filesystem provider ready"));
+        Task.FromResult<(bool, string?)>((true, "Built-in workspace filesystem provider ready"));
 
     public Task<McpToolCallResult> InvokeAsync(McpToolCallRequest request, CancellationToken cancellationToken)
     {
@@ -48,6 +63,9 @@ public sealed class LocalFilesystemMcpProvider(WorkspacePathGuard pathGuard) : I
             "fs_list_directory" => Task.FromResult(ListDirectory(request)),
             "fs_read_file" => ReadFileAsync(request, cancellationToken),
             "fs_search_files" => Task.FromResult(SearchFiles(request, cancellationToken)),
+            "fs_write_file" => WriteFileAsync(request, cancellationToken),
+            "fs_edit_file" => EditFileAsync(request, cancellationToken),
+            "fs_delete_file" => Task.FromResult(DeleteFile(request)),
             _ => Task.FromResult(new McpToolCallResult(true, $"Unknown tool '{request.ToolName}'.", "tool_not_found")),
         };
     }
@@ -185,6 +203,71 @@ public sealed class LocalFilesystemMcpProvider(WorkspacePathGuard pathGuard) : I
         return new McpToolCallResult(false, matches.Count == 0 ? "No matches found." : string.Join("\n", matches));
     }
 
+    private async Task<McpToolCallResult> WriteFileAsync(McpToolCallRequest request, CancellationToken cancellationToken)
+    {
+        var requestedPath = GetOptionalString(request.Arguments, "path");
+        var content = GetOptionalString(request.Arguments, "content");
+        if (string.IsNullOrWhiteSpace(requestedPath) || content is null)
+            return new McpToolCallResult(true, "Missing required 'path' or 'content' argument.", "invalid_arguments");
+
+        var check = pathGuard.ValidateWritePath(request.WorkspaceRootPath, requestedPath);
+        if (!check.IsAllowed || check.FullPath is null)
+            return new McpToolCallResult(true, check.ErrorMessage ?? "Path rejected.", check.ErrorCode);
+
+        var parent = Path.GetDirectoryName(check.FullPath);
+        if (!string.IsNullOrEmpty(parent))
+            Directory.CreateDirectory(parent);
+
+        await File.WriteAllTextAsync(check.FullPath, content, new UTF8Encoding(false), cancellationToken);
+        return new McpToolCallResult(false, $"Wrote {Encoding.UTF8.GetByteCount(content)} bytes to {requestedPath}.");
+    }
+
+    private async Task<McpToolCallResult> EditFileAsync(McpToolCallRequest request, CancellationToken cancellationToken)
+    {
+        var requestedPath = GetOptionalString(request.Arguments, "path");
+        var target = GetOptionalString(request.Arguments, "target");
+        var replacement = GetOptionalString(request.Arguments, "replacement");
+        if (string.IsNullOrWhiteSpace(requestedPath) || string.IsNullOrEmpty(target) || replacement is null)
+            return new McpToolCallResult(true, "Missing required 'path', 'target', or 'replacement' argument.", "invalid_arguments");
+
+        var check = pathGuard.ValidateWritePath(request.WorkspaceRootPath, requestedPath);
+        if (!check.IsAllowed || check.FullPath is null)
+            return new McpToolCallResult(true, check.ErrorMessage ?? "Path rejected.", check.ErrorCode);
+
+        if (!File.Exists(check.FullPath))
+            return new McpToolCallResult(true, "File not found.", "file_not_found");
+
+        var existing = await File.ReadAllTextAsync(check.FullPath, Encoding.UTF8, cancellationToken);
+        var firstIdx = existing.IndexOf(target, StringComparison.Ordinal);
+        if (firstIdx < 0)
+            return new McpToolCallResult(true, "Target text was not found in the file.", "target_not_found");
+
+        var secondIdx = existing.IndexOf(target, firstIdx + target.Length, StringComparison.Ordinal);
+        if (secondIdx >= 0)
+            return new McpToolCallResult(true, "Target text matched multiple locations; provide a more specific target block.", "ambiguous_target");
+
+        var updated = string.Concat(existing.AsSpan(0, firstIdx), replacement, existing.AsSpan(firstIdx + target.Length));
+        await File.WriteAllTextAsync(check.FullPath, updated, new UTF8Encoding(false), cancellationToken);
+        return new McpToolCallResult(false, $"Edited {requestedPath}.");
+    }
+
+    private McpToolCallResult DeleteFile(McpToolCallRequest request)
+    {
+        var requestedPath = GetOptionalString(request.Arguments, "path");
+        if (string.IsNullOrWhiteSpace(requestedPath))
+            return new McpToolCallResult(true, "Missing required 'path' argument.", "invalid_arguments");
+
+        var check = pathGuard.ValidateWritePath(request.WorkspaceRootPath, requestedPath);
+        if (!check.IsAllowed || check.FullPath is null)
+            return new McpToolCallResult(true, check.ErrorMessage ?? "Path rejected.", check.ErrorCode);
+
+        if (!File.Exists(check.FullPath))
+            return new McpToolCallResult(true, "File not found.", "file_not_found");
+
+        File.Delete(check.FullPath);
+        return new McpToolCallResult(false, $"Deleted {requestedPath}.");
+    }
+
     private static string? GetOptionalString(JsonElement args, string name) =>
         args.ValueKind == JsonValueKind.Object && args.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.String
             ? prop.GetString()
@@ -195,6 +278,6 @@ public sealed class LocalFilesystemMcpProvider(WorkspacePathGuard pathGuard) : I
             ? value
             : null;
 
-    private static McpToolDescriptor CreateDescriptor(string name, string description, string schemaJson) =>
-        new("filesystem-mcp", name, description, ToolSecurityTiers.Tier1, JsonDocument.Parse(schemaJson).RootElement.Clone());
+    private static McpToolDescriptor CreateDescriptor(string name, string description, string schemaJson, string tier = ToolSecurityTiers.Tier1) =>
+        new("filesystem-mcp", name, description, tier, JsonDocument.Parse(schemaJson).RootElement.Clone());
 }

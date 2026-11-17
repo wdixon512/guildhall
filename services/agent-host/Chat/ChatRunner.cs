@@ -6,6 +6,7 @@ using Guildhall.AgentHost.Mcp;
 using Guildhall.AgentHost.Persistence;
 using Guildhall.AgentHost.Providers;
 using Guildhall.AgentHost.Security;
+using Guildhall.AgentHost.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace Guildhall.AgentHost.Chat;
@@ -18,7 +19,8 @@ public sealed class ChatRunner(
     Lazy<IContextBuilder> contextBuilder,
     McpRegistry? mcpRegistry = null,
     ToolPermissionGate? permissionGate = null,
-    ExfiltrationGuard? exfiltrationGuard = null) : BackgroundService
+    ExfiltrationGuard? exfiltrationGuard = null,
+    ToolRollbackService? rollbackService = null) : BackgroundService
 {
     private const int MaxToolRounds = 6;
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> active = new();
@@ -147,8 +149,25 @@ public sealed class ChatRunner(
             Guid? interruptedRunId = null;
             string? harnessMode = run.Conversation.SelectedHarnessMode ?? run.Conversation.AgentDefinition.DefaultHarnessMode;
             string? workingDirectory = run.Conversation.WorkspaceRootPath;
-            var permissionPolicy = PermissionPolicies.Normalize(
-                run.Conversation.PermissionPolicyOverride ?? run.Conversation.AgentDefinition.PermissionPolicy);
+            if (run.Conversation.ActiveWorktreeId is { } activeWtId)
+            {
+                var wtPath = await db.ProjectWorktrees.AsNoTracking()
+                    .Where(w => w.Id == activeWtId && w.Status == "Active")
+                    .Select(w => w.WorktreePath)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (!string.IsNullOrWhiteSpace(wtPath) && Directory.Exists(wtPath))
+                    workingDirectory = wtPath;
+            }
+            var workspaceOverride = await db.GuildhallBehaviorSettings.AsNoTracking()
+                .Where(s => s.Id == 1)
+                .Select(s => s.WorkspacePolicyOverride)
+                .FirstOrDefaultAsync(cancellationToken);
+            var permissionPolicy = PermissionPolicies.ResolveEffective(
+                workspaceOverride,
+                run.Conversation.PermissionPolicyOverride,
+                run.Conversation.AgentDefinition.PermissionPolicy);
+            if (string.IsNullOrWhiteSpace(harnessMode))
+                harnessMode = permissionPolicy == PermissionPolicies.Unrestricted ? "unrestricted" : "read_only";
             var enabledServers = ParseToolIds(run.Conversation.AgentDefinition.EnabledToolIdsJson);
             var instructions = run.InstructionsSnapshot;
             if (run.SettingsSnapshotJson is { } settings)
@@ -273,6 +292,8 @@ public sealed class ChatRunner(
                     eventSequence++;
                     var toolResult = await ExecuteToolCallWithGateAsync(
                         runId,
+                        run.ConversationId,
+                        run.Conversation.ActiveWorktreeId,
                         eventSequence,
                         call,
                         toolByQualifiedName,
@@ -321,6 +342,8 @@ public sealed class ChatRunner(
 
     private async Task<BackingEngineToolResult> ExecuteToolCallWithGateAsync(
         Guid runId,
+        Guid conversationId,
+        Guid? activeWorktreeId,
         int sequenceNumber,
         BackingEngineToolCall call,
         IReadOnlyDictionary<string, McpToolDescriptor> toolByQualifiedName,
@@ -396,9 +419,40 @@ public sealed class ChatRunner(
             }
         }
 
-        var result = await mcpRegistry!.InvokeToolAsync(
-            new McpToolCallRequest(serverId, toolName, call.Arguments, workspaceRootPath),
-            cancellationToken);
+        ToolRollbackSnapshot? capturedSnapshot = null;
+        if (string.Equals(securityTier, ToolSecurityTiers.Tier2, StringComparison.OrdinalIgnoreCase) && rollbackService is not null)
+        {
+            capturedSnapshot = await rollbackService.CapturePreStateAsync(
+                runId,
+                eventId,
+                conversationId,
+                activeWorktreeId,
+                workspaceRootPath,
+                toolName,
+                rawArgs,
+                cancellationToken);
+        }
+
+        McpToolCallResult result;
+        try
+        {
+            result = await mcpRegistry!.InvokeToolAsync(
+                new McpToolCallRequest(serverId, toolName, call.Arguments, workspaceRootPath),
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (capturedSnapshot is not null && rollbackService is not null)
+                await rollbackService.RollbackEventAsync(runId, eventId, CancellationToken.None);
+            result = new McpToolCallResult(true, $"Tool execution threw an error and was rolled back: {ex.Message}", "tool_exception");
+        }
+
+        if (result.IsError && capturedSnapshot is not null && rollbackService is not null)
+        {
+            var (rolledBack, _, _) = await rollbackService.RollbackEventAsync(runId, eventId, CancellationToken.None);
+            if (rolledBack)
+                result = result with { Content = $"{result.Content}\n[Automatic rollback restored previous workspace state.]" };
+        }
 
         var durationMs = (long)timeProvider.GetElapsedTime(toolStartedAt).TotalMilliseconds;
         var completedUtc = timeProvider.GetUtcNow().UtcDateTime;

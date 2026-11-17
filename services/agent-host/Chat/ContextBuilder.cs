@@ -94,7 +94,8 @@ public sealed class ContextBuilder(
         var notes = await db.MemoryNotes.AsNoTracking()
             .Where(x => x.IsEnabled &&
                         (x.Scope == MemoryNoteScope.AboutYou ||
-                         (x.Scope == MemoryNoteScope.Member && x.AgentDefinitionId == conversation.AgentDefinitionId)))
+                         (x.Scope == MemoryNoteScope.Member && x.AgentDefinitionId == conversation.AgentDefinitionId) ||
+                         (x.Scope == MemoryNoteScope.Project && conversation.ProjectId != null && x.ProjectId == conversation.ProjectId)))
             .OrderBy(x => x.Scope)
             .ThenByDescending(x => x.UpdatedUtc)
             .ThenBy(x => x.Id)

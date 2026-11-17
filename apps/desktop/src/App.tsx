@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { bootstrap, HostRequestError, parseDiscovery, parseReadiness, request, requestBlob } from './api';
-import type { AgentProfile, Bootstrap, ConnectionsCatalogData, Conversation, ConversationDetails, Discovery, MessageView, Readiness } from './api';
+import { bootstrap, HostRequestError, parseDiscovery, parseReadiness, pickWorkspaceFolder, request, requestBlob } from './api';
+import type { AgentProfile, Bootstrap, ConnectionsCatalogData, Conversation, ConversationDetails, Discovery, MessageView, ProjectBranches, Readiness, RegisteredProject, WorktreeView } from './api';
 import { ChatComposer } from './ChatComposer';
 import { ChatTranscript } from './ChatTranscript';
 import { ConfirmationDialogs } from './ConfirmationDialogs';
@@ -11,6 +11,7 @@ import type { MemberIdentity } from './CouncilMember';
 import { CouncilSidebar } from './CouncilSidebar';
 import { Icon } from './Icon';
 import { PaneResizeHandle } from './PaneResizeHandle';
+import { ProjectWorkspaceBar } from './ProjectWorkspaceBar';
 import { WorkspaceSettingsPanel } from './WorkspaceSettingsPanel';
 import { markConversationRead, readWatermarks } from './chatPresentation';
 import { usePanelPresence } from './usePanelPresence';
@@ -22,6 +23,9 @@ const ContextInspector = lazy(() =>
 );
 const ConnectionsCatalog = lazy(() =>
   import('./ConnectionsCatalog').then(module => ({ default: module.ConnectionsCatalog }))
+);
+const WorktreeDiffDrawer = lazy(() =>
+  import('./WorktreeDiffDrawer').then(module => ({ default: module.WorktreeDiffDrawer }))
 );
 
 const sessionTabs = [
@@ -158,7 +162,43 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 900);
   const [showPreview, setShowPreview] = useState(false);
   const [showWorkspaceBar, setShowWorkspaceBar] = useState(false);
-  const [workspaceRootDraft, setWorkspaceRootDraft] = useState('');
+  const [projects, setProjects] = useState<RegisteredProject[]>([]);
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
+  const [projectBranches, setProjectBranches] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [isolateNewWorktree, setIsolateNewWorktree] = useState(false);
+  const [worktreeNotice, setWorktreeNotice] = useState('');
+
+  const activeSelectedProjectId = conversation ? (conversation.conversation.projectId ?? null) : pendingProjectId;
+  useEffect(() => {
+    const config = configuration.current;
+    if (!config || !activeSelectedProjectId) {
+      setProjectBranches([]);
+      setSelectedBranch('');
+      return;
+    }
+    const proj = projects.find(p => p.id === activeSelectedProjectId);
+    if (!proj?.isGitRepository) {
+      setProjectBranches([]);
+      setSelectedBranch('');
+      return;
+    }
+    const ac = new AbortController();
+    void request(config, `/projects/${activeSelectedProjectId}/branches`, ac.signal)
+      .then(data => {
+        const res = data as ProjectBranches;
+        setProjectBranches(Array.isArray(res.branches) ? res.branches : []);
+        setSelectedBranch(res.defaultBranch ?? res.branches?.[0] ?? '');
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) {
+          setProjectBranches([]);
+          setSelectedBranch('');
+        }
+      });
+    return () => ac.abort();
+  }, [activeSelectedProjectId, projects]);
+  const [, setWorkspaceRootDraft] = useState('');
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const wasWideViewport = useRef(window.innerWidth >= 900);
   const [councilWidth, setCouncilWidth] = useState(() => storedPaneWidth('guildhall.pane.council', window.innerWidth >= 1800 ? 310 : window.innerWidth >= 900 ? 290 : 260, 220, 520));
@@ -220,6 +260,7 @@ export default function App() {
         !('apiVersion' in health) || health.apiVersion !== 1) throw new Error('Invalid health');
       setHost('Connected');
       await Promise.all([
+        loadProjects(config, controller.signal),
         request(config, '/ready', controller.signal).then(parseReadiness).then(value => {
           if (pending.current === controller) {
             setDatabase(value);
@@ -720,6 +761,82 @@ export default function App() {
     }
   }
 
+  async function rollbackToolEvent(runId: string, eventId: string) {
+    if (!configuration.current || !conversation || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      await request(configuration.current, `/runs/${runId}/events/${eventId}/rollback`, new AbortController().signal, {
+        method: 'POST',
+      });
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      setConversation(updated);
+    } catch {
+      setChatError('Could not roll back tool execution.');
+    } finally {
+      chatOperation.current = false; setChatBusy(false);
+    }
+  }
+
+  async function selectProjectForConversation(project: RegisteredProject | null) {
+    if (!conversation) {
+      setPendingProjectId(project?.id ?? null);
+      if (!project?.isGitRepository) setIsolateNewWorktree(false);
+      return;
+    }
+    if (!configuration.current || chatOperation.current) return;
+    chatOperation.current = true; setChatBusy(true); setChatError('');
+    try {
+      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: conversation.conversation.revision,
+          projectId: project ? project.id : '00000000-0000-0000-0000-000000000000',
+          workspaceRootPath: project ? project.rootPath : '',
+        }),
+      }) as Conversation;
+      setConversation(curr => curr ? { ...curr, conversation: updated } : curr);
+      setHistory(items => items.map(item => item.id === updated.id ? updated : item));
+    } catch {
+      setChatError('Could not update active project.');
+    } finally {
+      chatOperation.current = false; setChatBusy(false);
+    }
+  }
+
+  async function browseAndRegisterProject() {
+    if (!configuration.current) return;
+    setChatError('');
+    let picked: string | null = null;
+    try {
+      picked = await pickWorkspaceFolder();
+    } catch {
+      setShowWorkspaceBar(true);
+      setChatError('Could not open the Windows folder picker; enter the folder path in the workspace bar.');
+      return;
+    }
+    if (!picked) return;
+    try {
+      const created = await request(configuration.current, '/projects', new AbortController().signal, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rootPath: picked }),
+      }) as RegisteredProject;
+      setProjects(curr => [created, ...curr.filter(p => p.id !== created.id)]);
+      await selectProjectForConversation(created);
+    } catch (reason) {
+      setShowWorkspaceBar(true);
+      setChatError(reason instanceof HostRequestError && reason.serverMessage ? reason.serverMessage : 'Could not register the selected project folder.');
+    }
+  }
+
+  async function loadProjects(config: Bootstrap, signal?: AbortSignal) {
+    try {
+      const items = await request(config, '/projects', signal ?? new AbortController().signal) as RegisteredProject[];
+      if (Array.isArray(items)) setProjects(items);
+    } catch { /* Non-fatal if migration pending */ }
+  }
+
   async function updateMemberToolPolicy(enabledToolIds: string[], permissionPolicy: string) {
     if (!configuration.current || !activeProfile || profileMutation.current) return;
     profileMutation.current = true;
@@ -755,28 +872,7 @@ export default function App() {
     }
   }
 
-  async function saveWorkspaceRootPath() {
-    if (!configuration.current || !conversation || chatOperation.current) return;
-    chatOperation.current = true; setChatBusy(true); setChatError('');
-    try {
-      const updated = await request(configuration.current, `/conversations/${conversation.conversation.id}`, new AbortController().signal, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspaceRootPath: workspaceRootDraft.trim(),
-          expectedRevision: conversation.conversation.revision,
-        }),
-      }) as Conversation;
-      setConversation({ ...conversation, conversation: updated });
-      setHistory(items => items.map(item => item.id === updated.id ? updated : item));
-      setShowWorkspaceBar(false);
-    } catch {
-      setChatError('Could not update workspace root folder.');
-    } finally {
-      chatOperation.current = false; setChatBusy(false);
-    }
-  }
-
+  
   async function sendMessage() {
     if (!conversation && (!activeProfile || activeProfile.isArchived)) return;
     if (activeProfile && profileHasPendingChanges(activeProfile.id)) { setChatError('This member is still saving. Wait for the save to finish before sending.'); return; }
@@ -794,9 +890,16 @@ export default function App() {
     try {
       let target = conversation;
       if (!target) {
+        const selectedProj = projects.find(p => p.id === pendingProjectId) ?? null;
         const created = await request(configuration.current, '/conversations', new AbortController().signal, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: 'New conversation', modelId, agentDefinitionId: activeAgentId }),
+          body: JSON.stringify({
+            title: 'New conversation',
+            modelId,
+            agentDefinitionId: activeAgentId,
+            projectId: selectedProj?.id ?? null,
+            workspaceRootPath: selectedProj?.rootPath ?? null,
+          }),
         }) as Conversation;
         target = await request(configuration.current, `/conversations/${created.id}`, new AbortController().signal) as ConversationDetails;
         draftsByKey.current.delete(draftContextKey(null, activeAgentId));
@@ -805,6 +908,15 @@ export default function App() {
         setHistory(items => [created, ...items.filter(item => item.id !== created.id)]);
       }
       target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      if (isolateNewWorktree && target.conversation.projectId && !target.conversation.activeWorktreeId && target.messages.length === 0) {
+        await request(configuration.current, `/conversations/${target.conversation.id}/worktree`, new AbortController().signal, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ baseBranch: selectedBranch || null }),
+        });
+        setIsolateNewWorktree(false);
+        target = await request(configuration.current, `/conversations/${target.conversation.id}`, new AbortController().signal) as ConversationDetails;
+      }
       if (editingQueuedRunId) {
         const original = target.messages.find(message => message.role === 'assistant' && message.runId === editingQueuedRunId);
         if (original?.status !== 'Queued') { setEditingQueuedRunId(null); throw new Error('queued_message_already_started'); }
@@ -1018,6 +1130,7 @@ export default function App() {
               uiScale={uiScale}
               onUiScaleChange={setUiScale}
               messages={conversation?.messages ?? []}
+              activeProject={projects.find(p => p.id === conversation?.conversation.projectId) ?? null}
               onClose={() => setShowSettings(false)}
             />
           )}
@@ -1035,9 +1148,9 @@ export default function App() {
                       setShowWorkspaceBar(v => !v);
                     }}
                     aria-expanded={showWorkspaceBar}
-                    title={conversation.conversation.workspaceRootPath ? `Workspace: ${conversation.conversation.workspaceRootPath}` : 'Set authorized read-only workspace folder'}
+                    title={conversation.conversation.workspaceRootPath ? `Project: ${conversation.conversation.workspaceRootPath}` : 'Choose local project folder'}
                   >
-                    <Icon name="folder" size={16} /><span>{conversation.conversation.workspaceRootPath ? 'Workspace' : 'Set folder'}</span>
+                    <Icon name="folder" size={16} /><span>{conversation.conversation.workspaceRootPath ? 'Project' : 'Choose project'}</span>
                   </button>
                 )}
                 <button
@@ -1050,22 +1163,32 @@ export default function App() {
               </div>
             </div>
             {conversation && showWorkspaceBar && (
-              <form
-                className="workspace-root-bar"
-                onSubmit={event => { event.preventDefault(); void saveWorkspaceRootPath(); }}
-              >
-                <label>
-                  <span>Read-only workspace folder</span>
-                  <input
-                    type="text"
-                    value={workspaceRootDraft}
-                    onChange={event => setWorkspaceRootDraft(event.target.value)}
-                    placeholder="e.g. G:\repos\guildhall"
-                  />
-                </label>
-                <button type="submit" disabled={chatBusy}>Save</button>
-                <button type="button" onClick={() => setShowWorkspaceBar(false)}>Cancel</button>
-              </form>
+              <ProjectWorkspaceBar
+                config={configuration.current}
+                activeConversation={conversation.conversation}
+                projects={projects}
+                branches={projectBranches}
+                selectedBranch={selectedBranch}
+                onSelectBranch={setSelectedBranch}
+                isNewSession={conversation.messages.length === 0}
+                isolateNewWorktree={isolateNewWorktree}
+                onToggleIsolateNewWorktree={setIsolateNewWorktree}
+                onProjectsChange={setProjects}
+                onSelectProject={selectProjectForConversation}
+                onWorktreeCreated={(wt: WorktreeView) => {
+                  setConversation(curr => curr ? {
+                    ...curr,
+                    conversation: {
+                      ...curr.conversation,
+                      activeWorktreeId: wt.id,
+                      activeWorktreeBranch: wt.branchName,
+                      activeWorktreePath: wt.worktreePath,
+                      revision: curr.conversation.revision + 1,
+                    },
+                  } : curr);
+                }}
+                onOpenDiffReview={() => { setShowMember(false); setPreviewTab('git'); setShowPreview(true); }}
+              />
             )}
             <ChatTranscript
               config={configuration.current}
@@ -1085,6 +1208,16 @@ export default function App() {
                 setMemoryDraft({ text, scope: activeProfile ? 'Member' : 'AboutYou' });
               }}
               onResolveToolDecision={(runId, eventId, approved) => void resolveToolDecision(runId, eventId, approved)}
+              onRollbackToolEvent={(runId, eventId) => void rollbackToolEvent(runId, eventId)}
+              projects={projects}
+              selectedProjectId={conversation ? (conversation.conversation.projectId ?? null) : pendingProjectId}
+              branches={projectBranches}
+              selectedBranch={selectedBranch}
+              isolateNewWorktree={isolateNewWorktree}
+              onSelectProject={project => void selectProjectForConversation(project)}
+              onSelectBranch={setSelectedBranch}
+              onBrowseProject={() => void browseAndRegisterProject()}
+              onToggleIsolateNewWorktree={setIsolateNewWorktree}
             />
             <ChatComposer
               composerInput={composerInput}
@@ -1171,15 +1304,45 @@ export default function App() {
               <button aria-label="Collapse session tools" onClick={() => setShowPreview(false)}>×</button>
             </div>
             <div className="session-tabs" role="group" aria-label="Session tools">
-              {sessionTabs.map(tab => (
-                <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>
-                  {tab.label}<small>{tab.status}</small>
-                </button>
-              ))}
+              {sessionTabs.map(tab => {
+                const status = tab.id === 'git'
+                  ? (conversation?.conversation.activeWorktreeId
+                    ? 'Worktree'
+                    : conversation?.conversation.projectId
+                      ? 'Project'
+                      : 'No project')
+                  : tab.status;
+                return (
+                  <button key={tab.id} aria-pressed={previewTab === tab.id} className={previewTab === tab.id ? 'selected' : ''} onClick={() => setPreviewTab(tab.id)}>
+                    {tab.label}<small>{status}</small>
+                  </button>
+                );
+              })}
             </div>
             {previewTab === 'context' ? (
               <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading context inspector…</small></section>}>
                 <ContextInspector config={configuration.current} conversationId={conversation?.conversation.id ?? null} refreshToken={(conversation?.conversation.revision ?? 0) + memoryRefreshKey + (running ? 1 : 0)} />
+              </Suspense>
+            ) : previewTab === 'git' && conversation?.conversation.activeWorktreeId ? (
+              <Suspense fallback={<section className="session-placeholder" aria-busy="true"><small>Loading diff review…</small></section>}>
+                <WorktreeDiffDrawer
+                  config={configuration.current}
+                  conversationId={conversation.conversation.id}
+                  branchName={conversation.conversation.activeWorktreeBranch}
+                  onWorktreeResolved={message => {
+                    setWorktreeNotice(message);
+                    setConversation(curr => curr ? {
+                      ...curr,
+                      conversation: {
+                        ...curr.conversation,
+                        activeWorktreeId: null,
+                        activeWorktreeBranch: null,
+                        activeWorktreePath: null,
+                        revision: curr.conversation.revision + 1,
+                      },
+                    } : curr);
+                  }}
+                />
               </Suspense>
             ) : (
               <section key={previewTab} className="session-placeholder">
@@ -1187,8 +1350,13 @@ export default function App() {
                   {previewTab === 'git' ? '⌘' : previewTab === 'terminal' ? '>_' : previewTab === 'plan' ? '☷' : previewTab === 'browser' ? '◎' : previewTab === 'automations' ? '◷' : '◌'}
                 </span>
                 <span className="eyebrow">{activeSessionPanel.title}</span>
-                <p>{activeSessionPanel.detail}</p>
-                <small>Preview only · This panel does not run commands or connect external services.</small>
+                {previewTab === 'git' && worktreeNotice && <p role="status">{worktreeNotice}</p>}
+                <p>
+                  {previewTab === 'git' && conversation?.conversation.projectId
+                    ? 'Project attached. Click Isolate Worktree in the workspace bar to edit on an isolated Git branch and review diffs here.'
+                    : activeSessionPanel.detail}
+                </p>
+                {previewTab !== 'git' && <small>Preview only · This panel does not run commands or connect external services.</small>}
               </section>
             )}
           </aside>

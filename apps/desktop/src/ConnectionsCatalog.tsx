@@ -2,6 +2,37 @@ import { useState } from 'react';
 import { HostRequestError, request } from './api';
 import type { Bootstrap, ConnectionEntry, ConnectionsCatalogData } from './api';
 import { openExternalLink } from './StreamingMarkdown';
+import antigravityLogo from './assets/connections/antigravity.svg';
+import anthropicLogo from './assets/connections/anthropic.svg';
+import claudeLogo from './assets/connections/claude.svg';
+import cursorLogo from './assets/connections/cursor.svg';
+import filesystemLogo from './assets/connections/filesystem.svg';
+import geminiLogo from './assets/connections/gemini.svg';
+import gitLogo from './assets/connections/git.svg';
+import githubLogo from './assets/connections/github.svg';
+import gmailLogo from './assets/connections/gmail.svg';
+import googleDriveLogo from './assets/connections/google-drive.svg';
+import ollamaLogo from './assets/connections/ollama.svg';
+import openaiLogo from './assets/connections/openai.svg';
+import sqlServerLogo from './assets/connections/sql-server.svg';
+
+const CONNECTION_LOGOS: Record<string, string> = {
+  ollama: ollamaLogo,
+  'openai-api': openaiLogo,
+  'gemini-api': geminiLogo,
+  'anthropic-api': anthropicLogo,
+  'codex-cli': openaiLogo,
+  'agy-cli': antigravityLogo,
+  'claude-cli': claudeLogo,
+  'cursor-cli': cursorLogo,
+  'gemini-cli': geminiLogo,
+  'filesystem-mcp': filesystemLogo,
+  'git-mcp': gitLogo,
+  'github-mcp': githubLogo,
+  'google-drive-mcp': googleDriveLogo,
+  'gmail-mcp': gmailLogo,
+  'sql-server-mcp': sqlServerLogo,
+};
 
 const INSTALL_GUIDES: Record<string, { url: string; command?: string }> = {
   ollama: { url: 'https://ollama.com/download' },
@@ -176,12 +207,20 @@ export function ConnectionsCatalog({
               {group.map(entry => {
                 const isBusy = busyId === entry.id;
                 const isEditing = editingId === entry.id;
+                const logoSrc = CONNECTION_LOGOS[entry.id];
                 return (
                   <article key={entry.id} className={`connection-card ${entry.isPlanned ? 'is-planned' : ''}`}>
                     <div className="connection-card-top">
-                      <div>
-                        <strong>{entry.displayName}</strong>
-                        <small>{entry.statusDetail ?? ''}</small>
+                      <div className="connection-card-title">
+                        {logoSrc && (
+                          <span className="connection-logo" aria-hidden="true">
+                            <img src={logoSrc} alt="" width={18} height={18} />
+                          </span>
+                        )}
+                        <div>
+                          <strong>{entry.displayName}</strong>
+                          <small>{entry.statusDetail ?? ''}</small>
+                        </div>
                       </div>
                       <span className={`connection-status-pill ${statusClass(entry.status)}`}>{entry.status}</span>
                     </div>

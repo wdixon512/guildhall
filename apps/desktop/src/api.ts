@@ -50,17 +50,28 @@ export type ConnectionModelOption = { id: string; displayName: string; supportsV
 export type ConnectionEntry = { id: string; pillar: string; engineKind: string; displayName: string; authType: string; status: ConnectionStatus; statusDetail?: string | null; keyHint?: string | null; defaultModelId?: string | null; models: ConnectionModelOption[]; canConfigureApiKey: boolean; canProbe: boolean; isPlanned: boolean };
 export type ConnectionsCatalogData = { entries: ConnectionEntry[]; checkedUtc: string };
 export type GuildhallBehavior = { instructions: string; revision: number };
-export type MemoryNoteScope = 'AboutYou' | 'Member';
-export type MemoryNote = { id: string; scope: MemoryNoteScope; agentDefinitionId?: string | null; body: string; isEnabled: boolean; sourceConversationId?: string | null; createdUtc: string; updatedUtc: string; revision: number };
+export type MemoryNoteScope = 'AboutYou' | 'Member' | 'Project';
+export type MemoryNote = { id: string; scope: MemoryNoteScope; agentDefinitionId?: string | null; projectId?: string | null; body: string; isEnabled: boolean; sourceConversationId?: string | null; createdUtc: string; updatedUtc: string; revision: number };
 export type RunningModelDescriptor = { name: string; sizeBytes: number; sizeVramBytes: number; expiresAtUtc?: string | null; contextLength?: number | null };
 export type VramResidency = { providerId: string; status: string; useGpu: boolean; keepAliveSeconds: number; models: RunningModelDescriptor[] };
 export type ContextMemoryNoteRef = { id: string; scope: MemoryNoteScope; revision: number; estimatedTokens: number; preview: string };
 export type CrossTurnBudgetSummary = { estimatedSessionTokens: number; maxSessionTokens: number; estimatedNextTurnTokens: number; maxTurnContextTokens: number; completedTurns: number; isOverTurnLimit: boolean; isOverSessionBudget: boolean };
 export type McpServerHealthView = { serverId: string; displayName: string; transport: string; status: string; consecutiveFailures: number; lastCheckedUtc?: string | null; nextRetryUtc?: string | null; lastError?: string | null };
 export type ContextInspectorData = { conversationId: string; agentDefinitionId: string; memberName: string; modelId?: string | null; behaviorRevision: number; behaviorChars: number; globalGuidelinesHash?: string | null; globalGuidelinesChars: number; memberInstructionsChars: number; memoryNotes: ContextMemoryNoteRef[]; retainedHistoryTurns: number; retainedHistoryChars: number; budget: CrossTurnBudgetSummary; vram: VramResidency; estimatedToolSchemaTokens?: number; enabledToolCount?: number; mcpServers?: McpServerHealthView[] };
-export type Conversation = { id: string; title: string; selectedProviderId?: string | null; selectedModelId?: string | null; selectedHarnessMode?: string | null; workspaceRootPath?: string | null; permissionPolicyOverride?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string; lastResponseUtc?: string | null };
+export type Conversation = { id: string; title: string; selectedProviderId?: string | null; selectedModelId?: string | null; selectedHarnessMode?: string | null; workspaceRootPath?: string | null; permissionPolicyOverride?: string | null; projectId?: string | null; activeWorktreeId?: string | null; activeWorktreeBranch?: string | null; activeWorktreePath?: string | null; revision: number; isArchived?: boolean; archivedUtc?: string | null; hasActiveRun?: boolean; agentDefinitionId?: string; lastResponseUtc?: string | null };
 export type Attachment = { id: string; fileName: string; contentType: string; length: number };
-export type RunEventView = { id: string; sequenceNumber: number; eventType: string; serverId: string; toolName: string; securityTier: string; status: string; argumentsRedactedJson: string; resultRedactedJson?: string | null; errorCode?: string | null; durationMs?: number | null; createdUtc?: string; completedUtc?: string | null };
+export type RunEventView = { id: string; sequenceNumber: number; eventType: string; serverId: string; toolName: string; securityTier: string; status: string; argumentsRedactedJson: string; resultRedactedJson?: string | null; errorCode?: string | null; durationMs?: number | null; createdUtc?: string; completedUtc?: string | null; rollbackStatus?: string | null; canRollback?: boolean };
+export type RegisteredProject = { id: string; name: string; rootPath: string; isGitRepository: boolean; defaultBranch?: string | null; createdUtc: string; updatedUtc: string; lastOpenedUtc: string; revision: number };
+export type ProjectBranches = { branches: string[]; defaultBranch?: string | null };
+export type WorktreeView = { id: string; projectId: string; conversationId: string; branchName: string; worktreePath: string; baseCommitSha: string; status: string; createdUtc: string; updatedUtc: string };
+export type WorktreeDiff = { worktreeId: string; branchName: string; baseCommitSha: string; diffText: string; changedFiles: string[]; hasChanges: boolean };
+export type WorktreeMergeResult = { merged: boolean; mergedCommitSha?: string | null; message: string };
+export type WorkspaceAccessPolicy = { policyOverride?: string | null; revision: number };
+export type WorktreeSettings = { defaultWorktreeRootPath?: string | null; revision: number };
+
+export async function pickWorkspaceFolder(): Promise<string | null> {
+  return invoke<string | null>('pick_workspace_folder');
+}
 export type MessageView = { id: string; runId?: string; role: string; text: string; status: string; turnNumber: number; modelId?: string; providerId?: string | null; engineKind?: string | null; inputTokens?: number | null; outputTokens?: number | null; costSource?: string | null; errorCode?: string | null; responseDurationSeconds?: number | null; attachments: Attachment[]; events?: RunEventView[] | null };
 export type ConversationDetails = { conversation: Conversation; agent?: AgentProfile; messages: MessageView[] };
 export type RunAcceptedResponse = { runId: string; conversationRevision: number };

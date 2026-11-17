@@ -34,3 +34,8 @@ public sealed class CursorCliEngine(
     ICliProcessRunner processRunner,
     EnvironmentScrubber environmentScrubber)
     : CliHarnessEngineBase(CliHarnessDescriptors.Find("cursor-cli")!, processRunner, environmentScrubber);
+
+public sealed class GeminiCliEngine(
+    ICliProcessRunner processRunner,
+    EnvironmentScrubber environmentScrubber)
+    : CliHarnessEngineBase(CliHarnessDescriptors.Find("gemini-cli")!, processRunner, environmentScrubber);

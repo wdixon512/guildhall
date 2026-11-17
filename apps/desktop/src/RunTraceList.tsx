@@ -16,13 +16,16 @@ export function RunTraceList({
   events,
   busy = false,
   onResolveDecision,
+  onRollback,
 }: {
   runId?: string;
   events: RunEventView[];
   busy?: boolean;
   onResolveDecision?: (runId: string, eventId: string, approved: boolean) => void;
+  onRollback?: (runId: string, eventId: string) => void;
 }) {
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(null);
 
   if (!events.length) return null;
 
@@ -46,8 +49,43 @@ export function RunTraceList({
                 <span className="run-trace-status">
                   {ev.status === 'PendingApproval' ? 'Approval required' : ev.status}
                   {ev.durationMs != null ? ` · ${ev.durationMs} ms` : ''}
+                  {ev.rollbackStatus === 'RolledBack' ? ' · Rolled back' : ''}
                 </span>
               </button>
+              {ev.canRollback && runId && onRollback && (
+                confirmRollbackId === ev.id ? (
+                  <span className="run-approval-actions">
+                    <button
+                      type="button"
+                      className="danger-button run-rollback-btn"
+                      aria-label={`Confirm rollback ${ev.toolName}`}
+                      disabled={busy}
+                      onClick={() => { setConfirmRollbackId(null); onRollback(runId, ev.id); }}
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      className="run-rollback-btn"
+                      disabled={busy}
+                      onClick={() => setConfirmRollbackId(null)}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="run-rollback-btn"
+                    aria-label={`Rollback ${ev.toolName}`}
+                    disabled={busy}
+                    onClick={() => setConfirmRollbackId(ev.id)}
+                    title="Restore workspace state before this tool ran"
+                  >
+                    Rollback
+                  </button>
+                )
+              )}
             </div>
             {isPending && runId && onResolveDecision && (
               <div className="run-approval-card" role="region" aria-label={`Approval required for ${ev.toolName}`}>

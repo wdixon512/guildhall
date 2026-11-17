@@ -260,7 +260,9 @@ export function ChatComposer({
             <Icon name="attach" size={22} />
           </button>
           {connections && (() => {
-            const activeEngines = connections.entries.filter(e => !e.isPlanned);
+            const activeEngines = connections.entries.filter(
+              e => !e.isPlanned && (e.engineKind === 'local' || e.engineKind === 'cloud_api' || e.engineKind === 'cli_harness'),
+            );
             const connected = activeEngines.filter(e => e.status === 'Connected');
             const disconnected = activeEngines.filter(e => e.status !== 'Connected');
             const kindTag = (kind: string) => kind === 'local' ? 'Local' : kind === 'cloud_api' ? 'API' : 'CLI';

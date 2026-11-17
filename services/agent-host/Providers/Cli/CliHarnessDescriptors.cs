@@ -44,7 +44,15 @@ public static class CliHarnessDescriptors
             DefaultModelId: "cursor-agent",
             ProbeArgs: ["--version"],
             LoginArgs: ["login"],
-            SignInHint: "Run `agent login` in your terminal to sign in with your Cursor subscription.")
+            SignInHint: "Run `agent login` in your terminal to sign in with your Cursor subscription."),
+        new(
+            ProviderId: "gemini-cli",
+            DisplayName: "Google Gemini CLI",
+            ExecutableName: "gemini",
+            DefaultModelId: "gemini-2.5-pro",
+            ProbeArgs: ["--version"],
+            LoginArgs: [],
+            SignInHint: "Run `gemini` in your terminal to sign in with your Google account.")
     ];
 
     public static CliHarnessDescriptor? Find(string providerId) =>
@@ -57,14 +65,17 @@ public static class CliHarnessDescriptors
         string workingDirectory,
         string? inlinePrompt = null)
     {
-        var allowWorkspaceWrite = string.Equals(harnessMode, "workspace_write", StringComparison.OrdinalIgnoreCase);
+        var allowWorkspaceWrite =
+            string.Equals(harnessMode, "workspace_write", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(harnessMode, "unrestricted", StringComparison.OrdinalIgnoreCase);
 
         return providerId.ToLowerInvariant() switch
         {
             "codex-cli" => BuildCodexArgs(modelId, allowWorkspaceWrite, workingDirectory),
             "agy-cli" => BuildAgyArgs(modelId, allowWorkspaceWrite, inlinePrompt ?? string.Empty),
             "claude-cli" => BuildClaudeArgs(modelId, allowWorkspaceWrite),
-            "cursor-cli" => BuildCursorArgs(modelId),
+            "cursor-cli" => BuildCursorArgs(modelId, allowWorkspaceWrite),
+            "gemini-cli" => BuildGeminiArgs(modelId, allowWorkspaceWrite),
             _ => throw new BackingEngineException("provider_unavailable", $"Unknown CLI harness '{providerId}'.")
         };
     }
@@ -121,12 +132,27 @@ public static class CliHarnessDescriptors
         return args;
     }
 
-    private static IReadOnlyList<string> BuildCursorArgs(string modelId)
+    private static IReadOnlyList<string> BuildCursorArgs(string modelId, bool allowWorkspaceWrite)
     {
         var args = new List<string> { "-p", "--output-format", "stream-json" };
+        if (!allowWorkspaceWrite)
+            args.AddRange(["--mode", "plan"]);
         if (!string.IsNullOrWhiteSpace(modelId) && !string.Equals(modelId, "cursor-agent", StringComparison.OrdinalIgnoreCase))
         {
             args.Add("--model");
+            args.Add(modelId);
+        }
+        return args;
+    }
+
+    private static IReadOnlyList<string> BuildGeminiArgs(string modelId, bool allowWorkspaceWrite)
+    {
+        var args = new List<string> { "--output-format", "stream-json" };
+        if (!allowWorkspaceWrite)
+            args.Add("--sandbox");
+        if (!string.IsNullOrWhiteSpace(modelId) && !string.Equals(modelId, "gemini-2.5-pro", StringComparison.OrdinalIgnoreCase))
+        {
+            args.Add("-m");
             args.Add(modelId);
         }
         return args;

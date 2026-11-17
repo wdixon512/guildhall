@@ -13,6 +13,8 @@ public sealed class GuildhallBehaviorSettings
 {
     public int Id { get; set; }
     public string Instructions { get; set; } = string.Empty;
+    public string? WorkspacePolicyOverride { get; set; }
+    public string? DefaultWorktreeRootPath { get; set; }
     public long Revision { get; set; }
 }
 
@@ -43,6 +45,8 @@ public sealed class Conversation
     public string? SelectedModelId { get; set; }
     public string? SelectedHarnessMode { get; set; }
     public string? WorkspaceRootPath { get; set; }
+    public Guid? ProjectId { get; set; }
+    public Guid? ActiveWorktreeId { get; set; }
     public string? PermissionPolicyOverride { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
@@ -106,13 +110,14 @@ public sealed class ChatAttachment
     public ChatMessage Message { get; set; } = null!;
 }
 
-public enum MemoryNoteScope { AboutYou, Member }
+public enum MemoryNoteScope { AboutYou, Member, Project }
 
 public sealed class MemoryNote
 {
     public Guid Id { get; set; }
     public MemoryNoteScope Scope { get; set; }
     public Guid? AgentDefinitionId { get; set; }
+    public Guid? ProjectId { get; set; }
     public string Body { get; set; } = string.Empty;
     public bool IsEnabled { get; set; } = true;
     public Guid? SourceConversationId { get; set; }
@@ -120,6 +125,7 @@ public sealed class MemoryNote
     public DateTime UpdatedUtc { get; set; }
     public long Revision { get; set; }
     public AgentDefinition? AgentDefinition { get; set; }
+    public RegisteredProject? Project { get; set; }
 }
 
 public sealed class ChatRunEvent
@@ -167,6 +173,72 @@ public sealed class McpServerRegistration
     public long Revision { get; set; }
 }
 
+public sealed class RegisteredProject
+{
+    private readonly ILazyLoader? _lazyLoader;
+    private List<ProjectWorktree>? _worktrees;
+
+    public RegisteredProject() { }
+    private RegisteredProject(ILazyLoader lazyLoader) => _lazyLoader = lazyLoader;
+
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string RootPath { get; set; } = string.Empty;
+    public bool IsGitRepository { get; set; }
+    public string? DefaultBranch { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+    public DateTime LastOpenedUtc { get; set; }
+    public long Revision { get; set; }
+
+    public List<ProjectWorktree> Worktrees
+    {
+        get => _lazyLoader.Load(this, ref _worktrees)!;
+        set => _worktrees = value;
+    }
+}
+
+public sealed class ProjectWorktree
+{
+    private readonly ILazyLoader? _lazyLoader;
+    private RegisteredProject? _project;
+
+    public ProjectWorktree() { }
+    private ProjectWorktree(ILazyLoader lazyLoader) => _lazyLoader = lazyLoader;
+
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid ConversationId { get; set; }
+    public string BranchName { get; set; } = string.Empty;
+    public string WorktreePath { get; set; } = string.Empty;
+    public string BaseCommitSha { get; set; } = string.Empty;
+    public string Status { get; set; } = "Active";
+    public DateTime CreatedUtc { get; set; }
+    public DateTime UpdatedUtc { get; set; }
+
+    public RegisteredProject Project
+    {
+        get => _lazyLoader.Load(this, ref _project)!;
+        set => _project = value;
+    }
+}
+
+public sealed class ToolRollbackSnapshot
+{
+    public Guid Id { get; set; }
+    public Guid RunId { get; set; }
+    public Guid RunEventId { get; set; }
+    public Guid ConversationId { get; set; }
+    public Guid? WorktreeId { get; set; }
+    public string Strategy { get; set; } = "FileBackup";
+    public string? TargetPath { get; set; }
+    public string? PreStateRef { get; set; }
+    public string? PostStateRef { get; set; }
+    public string Status { get; set; } = "Available";
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? RolledBackUtc { get; set; }
+}
+
 public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> options) : DbContext(options)
 {
     public DbSet<ApplicationMetadata> ApplicationMetadata => Set<ApplicationMetadata>();
@@ -179,6 +251,9 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
     public DbSet<MemoryNote> MemoryNotes => Set<MemoryNote>();
     public DbSet<ChatRunEvent> ChatRunEvents => Set<ChatRunEvent>();
     public DbSet<McpServerRegistration> McpServerRegistrations => Set<McpServerRegistration>();
+    public DbSet<RegisteredProject> RegisteredProjects => Set<RegisteredProject>();
+    public DbSet<ProjectWorktree> ProjectWorktrees => Set<ProjectWorktree>();
+    public DbSet<ToolRollbackSnapshot> ToolRollbackSnapshots => Set<ToolRollbackSnapshot>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<ApplicationMetadata>().ToTable("ApplicationMetadata");
@@ -186,7 +261,7 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
         modelBuilder.Entity<ApplicationMetadata>().Property(x => x.InstallationId).HasDefaultValueSql("NEWID()");
         modelBuilder.Entity<GuildhallBehaviorSettings>(e => {
             e.ToTable("GuildhallBehaviorSettings"); e.HasKey(x => x.Id); e.Property(x => x.Id).ValueGeneratedNever();
-            e.Property(x => x.Instructions).HasMaxLength(4000).IsRequired(); e.Property(x => x.Revision).IsConcurrencyToken();
+            e.Property(x => x.Instructions).HasMaxLength(4000).IsRequired(); e.Property(x => x.WorkspacePolicyOverride).HasMaxLength(40); e.Property(x => x.DefaultWorktreeRootPath).HasMaxLength(1024); e.Property(x => x.Revision).IsConcurrencyToken();
         });
         modelBuilder.Entity<AgentDefinition>(e => {
             e.ToTable("AgentDefinitions"); e.HasKey(x => x.Id); e.Property(x => x.Name).HasMaxLength(100).IsRequired();
@@ -211,8 +286,9 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.Body).HasMaxLength(2000).IsRequired();
             e.Property(x => x.IsEnabled).HasDefaultValue(true);
             e.Property(x => x.Revision).IsConcurrencyToken();
-            e.HasIndex(x => new { x.Scope, x.AgentDefinitionId, x.IsEnabled, x.UpdatedUtc });
+            e.HasIndex(x => new { x.Scope, x.AgentDefinitionId, x.ProjectId, x.IsEnabled, x.UpdatedUtc });
             e.HasOne(x => x.AgentDefinition).WithMany().HasForeignKey(x => x.AgentDefinitionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
         });
         modelBuilder.Entity<ChatRunEvent>(e => {
             e.ToTable("ChatRunEvents");
@@ -240,6 +316,35 @@ public sealed class GuildhallDbContext(DbContextOptions<GuildhallDbContext> opti
             e.Property(x => x.SecurityTier).HasMaxLength(20).IsRequired().HasDefaultValue("Tier3");
             e.Property(x => x.IsEnabled).HasDefaultValue(true);
             e.Property(x => x.Revision).IsConcurrencyToken();
+        });
+        modelBuilder.Entity<RegisteredProject>(e => {
+            e.ToTable("RegisteredProjects");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(160).IsRequired();
+            e.Property(x => x.RootPath).HasMaxLength(500).IsRequired();
+            e.Property(x => x.DefaultBranch).HasMaxLength(120);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => x.RootPath).IsUnique();
+        });
+        modelBuilder.Entity<ProjectWorktree>(e => {
+            e.ToTable("ProjectWorktrees");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.BranchName).HasMaxLength(160).IsRequired();
+            e.Property(x => x.WorktreePath).HasMaxLength(500).IsRequired();
+            e.Property(x => x.BaseCommitSha).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired().HasDefaultValue("Active");
+            e.HasIndex(x => new { x.ConversationId, x.Status });
+            e.HasOne(x => x.Project).WithMany(x => x.Worktrees).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ToolRollbackSnapshot>(e => {
+            e.ToTable("ToolRollbackSnapshots");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Strategy).HasMaxLength(30).IsRequired();
+            e.Property(x => x.TargetPath).HasMaxLength(500);
+            e.Property(x => x.PreStateRef).HasColumnType("nvarchar(max)");
+            e.Property(x => x.PostStateRef).HasColumnType("nvarchar(max)");
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired().HasDefaultValue("Available");
+            e.HasIndex(x => new { x.RunId, x.RunEventId });
         });
     }
 }

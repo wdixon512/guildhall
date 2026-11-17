@@ -89,7 +89,7 @@ public static class ChatEndpoints
                 .ToList();
             return Results.Ok(new PreambleCacheSnapshotResponse(cache.CurrentCacheBytes, cache.MaxCacheBytes, cache.Count, entries));
         });
-        app.MapGet("/memory-notes", async (string? scope, Guid? agentDefinitionId, string? query, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
+        app.MapGet("/memory-notes", async (string? scope, Guid? agentDefinitionId, Guid? projectId, string? query, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct);
             IQueryable<MemoryNote> notes = db.MemoryNotes.AsNoTracking();
@@ -103,9 +103,15 @@ public static class ChatEndpoints
                     return Results.BadRequest(new ErrorResponse("invalid_scope", "Member notes require an agentDefinitionId."));
                 notes = notes.Where(x => x.Scope == MemoryNoteScope.Member && x.AgentDefinitionId == agentDefinitionId.Value);
             }
+            else if (string.Equals(scope, "Project", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!projectId.HasValue || projectId.Value == Guid.Empty)
+                    return Results.BadRequest(new ErrorResponse("invalid_scope", "Project notes require a projectId."));
+                notes = notes.Where(x => x.Scope == MemoryNoteScope.Project && x.ProjectId == projectId.Value);
+            }
             else if (!string.IsNullOrWhiteSpace(scope))
             {
-                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou or Member."));
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou, Member, or Project."));
             }
             else if (agentDefinitionId.HasValue && agentDefinitionId.Value != Guid.Empty)
             {
@@ -126,25 +132,29 @@ public static class ChatEndpoints
                 .OrderByDescending(x => x.UpdatedUtc)
                 .ThenBy(x => x.Id)
                 .Take(200)
-                .Select(x => new MemoryNoteResponse(x.Id, x.Scope.ToString(), x.AgentDefinitionId, x.Body, x.IsEnabled, x.SourceConversationId, x.CreatedUtc, x.UpdatedUtc, x.Revision))
+                .Select(x => new MemoryNoteResponse(x.Id, x.Scope.ToString(), x.AgentDefinitionId, x.Body, x.IsEnabled, x.SourceConversationId, x.CreatedUtc, x.UpdatedUtc, x.Revision, x.ProjectId))
                 .ToListAsync(ct);
             return Results.Ok(items);
         });
         app.MapPost("/memory-notes", async (CreateMemoryNoteRequest request, IDbContextFactory<GuildhallDbContext> factory, TimeProvider timeProvider, CancellationToken ct) =>
         {
             if (!Enum.TryParse<MemoryNoteScope>(request.Scope, ignoreCase: true, out var parsedScope) || !Enum.IsDefined(parsedScope))
-                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou or Member."));
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Memory scope must be AboutYou, Member, or Project."));
             var body = request.Body?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(body) || body.Length > 2000)
                 return Results.BadRequest(new ErrorResponse("invalid_memory_body", "Memory note body must contain 1–2000 characters."));
-            if (parsedScope == MemoryNoteScope.AboutYou && request.AgentDefinitionId.HasValue)
-                return Results.BadRequest(new ErrorResponse("invalid_scope", "Shared AboutYou notes cannot belong to a specific member."));
+            if (parsedScope == MemoryNoteScope.AboutYou && (request.AgentDefinitionId.HasValue || request.ProjectId.HasValue))
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Shared AboutYou notes cannot belong to a specific member or project."));
             if (parsedScope == MemoryNoteScope.Member && (!request.AgentDefinitionId.HasValue || request.AgentDefinitionId.Value == Guid.Empty))
                 return Results.BadRequest(new ErrorResponse("invalid_scope", "Private Member notes require a guild member."));
+            if (parsedScope == MemoryNoteScope.Project && (!request.ProjectId.HasValue || request.ProjectId.Value == Guid.Empty))
+                return Results.BadRequest(new ErrorResponse("invalid_scope", "Project notes require a projectId."));
 
             await using var db = await factory.CreateDbContextAsync(ct);
             if (parsedScope == MemoryNoteScope.Member && !await db.AgentDefinitions.AsNoTracking().AnyAsync(x => x.Id == request.AgentDefinitionId!.Value, ct))
                 return Results.NotFound(new ErrorResponse("member_not_found", "Guild member was not found."));
+            if (parsedScope == MemoryNoteScope.Project && !await db.RegisteredProjects.AsNoTracking().AnyAsync(x => x.Id == request.ProjectId!.Value, ct))
+                return Results.NotFound(new ErrorResponse("project_not_found", "Registered project was not found."));
             if (request.SourceConversationId.HasValue && !await db.Conversations.AsNoTracking().AnyAsync(x => x.Id == request.SourceConversationId.Value, ct))
                 return Results.BadRequest(new ErrorResponse("conversation_not_found", "Source conversation was not found."));
 
@@ -154,6 +164,7 @@ public static class ChatEndpoints
                 Id = Guid.NewGuid(),
                 Scope = parsedScope,
                 AgentDefinitionId = parsedScope == MemoryNoteScope.Member ? request.AgentDefinitionId : null,
+                ProjectId = parsedScope == MemoryNoteScope.Project ? request.ProjectId : null,
                 Body = body,
                 IsEnabled = request.IsEnabled,
                 SourceConversationId = request.SourceConversationId,
@@ -163,7 +174,7 @@ public static class ChatEndpoints
             };
             db.MemoryNotes.Add(note);
             await db.SaveChangesAsync(ct);
-            return Results.Created($"/memory-notes/{note.Id}", ToMemoryNote(note));
+            return Results.Created($"/memory-notes/{note.Id}", new MemoryNoteResponse(note.Id, note.Scope.ToString(), note.AgentDefinitionId, note.Body, note.IsEnabled, note.SourceConversationId, note.CreatedUtc, note.UpdatedUtc, note.Revision, note.ProjectId));
         });
         app.MapPatch("/memory-notes/{id:guid}", async (Guid id, UpdateMemoryNoteRequest request, IDbContextFactory<GuildhallDbContext> factory, TimeProvider timeProvider, CancellationToken ct) =>
         {
@@ -367,7 +378,9 @@ public static class ChatEndpoints
                 .Select(x => new ConversationSummary(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc,
                     x.Runs.Any(r => r.Status == ChatRunStatus.Running || r.Status == ChatRunStatus.Cancelling || r.Status == ChatRunStatus.Queued), x.Revision, x.AgentDefinitionId,
                     x.Runs.Where(r => r.FinishedUtc != null && r.Messages.Any(m => m.Role == ChatMessageRole.Assistant && (r.Status == ChatRunStatus.Completed || m.Text != string.Empty))).Max(r => (DateTime?)r.FinishedUtc),
-                    x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride)).ToListAsync(ct);
+                    x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride, x.ProjectId, x.ActiveWorktreeId,
+                    x.ActiveWorktreeId != null ? db.ProjectWorktrees.Where(w => w.Id == x.ActiveWorktreeId).Select(w => w.BranchName).FirstOrDefault() : null,
+                    x.ActiveWorktreeId != null ? db.ProjectWorktrees.Where(w => w.Id == x.ActiveWorktreeId).Select(w => w.WorktreePath).FirstOrDefault() : null)).ToListAsync(ct);
             var untitledIds = rows.Where(x => x.Title == "New conversation").Select(x => x.Id).ToList();
             var firstMessages = await db.ChatMessages.AsNoTracking().Where(m => untitledIds.Contains(m.Run.ConversationId) && m.Role == ChatMessageRole.User)
                 .OrderBy(m => m.Run.TurnNumber).Select(m => new { ConversationId = m.Run.ConversationId, m.Text }).ToListAsync(ct);
@@ -380,7 +393,7 @@ public static class ChatEndpoints
             await runner.MutationGate.WaitAsync(ct);
             try {
             await using var db = await factory.CreateDbContextAsync(ct); var agentId = request.AgentDefinitionId ?? AssistantId; var assistant = await db.AgentDefinitions.AsNoTracking().SingleOrDefaultAsync(x => x.Id == agentId, ct); if (assistant is null) return Results.BadRequest(new ErrorResponse("agent_not_found", "Choose an existing guild member.")); if (assistant.IsArchived) return Results.Conflict(new ErrorResponse("member_archived", "Restore this guild member before starting a new session."));
-            var now = DateTime.UtcNow; var item = new Conversation { Id = Guid.NewGuid(), Title = title, AgentDefinitionId = assistant.Id, SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? assistant.DefaultProviderId : request.ProviderId.Trim(), SelectedModelId = request.ModelId ?? assistant.DefaultModelId, SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? assistant.DefaultHarnessMode : request.HarnessMode.Trim(), WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(), PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride), CreatedUtc = now, UpdatedUtc = now, Revision = 1 }; db.Conversations.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/conversations/{item.Id}", ToSummary(item));
+            var now = DateTime.UtcNow; var item = new Conversation { Id = Guid.NewGuid(), Title = title, AgentDefinitionId = assistant.Id, SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? assistant.DefaultProviderId : request.ProviderId.Trim(), SelectedModelId = request.ModelId ?? assistant.DefaultModelId, SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? assistant.DefaultHarnessMode : request.HarnessMode.Trim(), WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(), ProjectId = request.ProjectId, PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride), CreatedUtc = now, UpdatedUtc = now, Revision = 1 }; db.Conversations.Add(item); await db.SaveChangesAsync(ct); return Results.Created($"/conversations/{item.Id}", ToSummary(item));
             } finally { runner.MutationGate.Release(); }
         });
         app.MapGet("/conversations/{id:guid}", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
@@ -392,9 +405,20 @@ public static class ChatEndpoints
             var runIds = storedMessages.Select(m => m.RunId).Distinct().ToList();
             var runEvents = await db.ChatRunEvents.AsNoTracking().Where(e => runIds.Contains(e.RunId)).OrderBy(e => e.SequenceNumber)
                 .Select(e => new { e.Id, e.RunId, e.SequenceNumber, e.EventType, e.ServerId, e.ToolName, e.SecurityTier, e.Status, e.ArgumentsRedactedJson, e.ResultRedactedJson, e.ErrorCode, e.DurationMs, e.CreatedUtc, e.CompletedUtc }).ToListAsync(ct);
+            var rollbacksByEvent = await db.ToolRollbackSnapshots.AsNoTracking()
+                .Where(s => runIds.Contains(s.RunId))
+                .Select(s => new { s.RunEventId, s.Status })
+                .ToDictionaryAsync(s => s.RunEventId, s => s.Status, ct);
+            var activeWt = item.ActiveWorktreeId is { } wtId
+                ? await db.ProjectWorktrees.AsNoTracking().Where(w => w.Id == wtId).Select(w => new { w.BranchName, w.WorktreePath }).FirstOrDefaultAsync(ct)
+                : null;
             var messages = storedMessages.OrderBy(m => m.TurnNumber).ThenBy(m => m.Role == ChatMessageRole.User ? 0 : 1).Select(m => new MessageView(m.Id, m.Role.ToString().ToLowerInvariant(), m.Text, m.RunId, m.Status.ToString(), m.TurnNumber, attachments.Where(a => a.MessageId == m.Id).Select(a => new AttachmentView(a.Id, a.FileName, a.ContentType, a.Length)).ToArray(), m.ErrorCode, m.ModelId,
                 m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue ? Math.Max(0, (m.FinishedUtc.Value - m.StartedUtc).TotalSeconds) : null, m.ProviderId, m.EngineKind, m.InputTokens, m.OutputTokens, m.CostSource,
-                m.Role == ChatMessageRole.Assistant ? runEvents.Where(e => e.RunId == m.RunId).Select(e => new RunEventView(e.Id, e.SequenceNumber, e.EventType, e.ServerId, e.ToolName, e.SecurityTier, e.Status, e.ArgumentsRedactedJson, e.ResultRedactedJson, e.ErrorCode, e.DurationMs, e.CreatedUtc, e.CompletedUtc)).ToArray() : null)).ToList();
+                m.Role == ChatMessageRole.Assistant ? runEvents.Where(e => e.RunId == m.RunId).Select(e =>
+                {
+                    rollbacksByEvent.TryGetValue(e.Id, out var rbStatus);
+                    return new RunEventView(e.Id, e.SequenceNumber, e.EventType, e.ServerId, e.ToolName, e.SecurityTier, e.Status, e.ArgumentsRedactedJson, e.ResultRedactedJson, e.ErrorCode, e.DurationMs, e.CreatedUtc, e.CompletedUtc, rbStatus, rbStatus == "Available");
+                }).ToArray() : null)).ToList();
             var title = item.Title;
             if (title == "New conversation")
             {
@@ -403,14 +427,14 @@ public static class ChatEndpoints
             }
             var lastResponseUtc = storedMessages.Where(m => m.Role == ChatMessageRole.Assistant && m.FinishedUtc.HasValue && (m.Status == ChatRunStatus.Completed || !string.IsNullOrEmpty(m.Text))).Select(m => (DateTime?)m.FinishedUtc).Max();
             var summary = new ConversationSummary(item.Id, title, item.SelectedModelId, item.CreatedUtc, item.UpdatedUtc, item.IsArchived, item.ArchivedUtc,
-                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId, lastResponseUtc, item.SelectedProviderId, item.SelectedHarnessMode, item.WorkspaceRootPath, item.PermissionPolicyOverride);
+                messages.Any(message => message.Status is "Running" or "Cancelling" or "Queued"), item.Revision, item.AgentDefinitionId, lastResponseUtc, item.SelectedProviderId, item.SelectedHarnessMode, item.WorkspaceRootPath, item.PermissionPolicyOverride, item.ProjectId, item.ActiveWorktreeId, activeWt?.BranchName, activeWt?.WorktreePath);
             var agent = await db.AgentDefinitions.AsNoTracking().SingleAsync(x => x.Id == item.AgentDefinitionId, ct);
             return Results.Ok(new ConversationResponse(summary, messages, ToProfile(agent)));
         });
         app.MapPatch("/conversations/{id:guid}", async (Guid id, UpdateConversationRequest request, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
             await using var db = await factory.CreateDbContextAsync(ct); var item = await db.Conversations.SingleOrDefaultAsync(x => x.Id == id, ct); if (item is null) return Results.NotFound(); if (item.Revision != request.ExpectedRevision) return Results.Conflict(new ErrorResponse("revision_conflict", "Conversation changed; refresh and retry."));
-            if (request.Title is not null) { if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200) return Results.BadRequest(new ErrorResponse("input_limit", "Chat names must be 1–200 characters.")); item.Title = request.Title.Trim(); } if (request.ModelId is not null) item.SelectedModelId = string.IsNullOrWhiteSpace(request.ModelId) ? null : request.ModelId.Trim(); if (request.ProviderId is not null) item.SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(); if (request.HarnessMode is not null) item.SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? null : request.HarnessMode.Trim(); if (request.WorkspaceRootPath is not null) item.WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(); if (request.PermissionPolicyOverride is not null) item.PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride); if (request.IsArchived is not null) { var active = await db.ChatRuns.AnyAsync(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued), ct); if (active) return Results.Conflict(new ErrorResponse("run_active", "Wait for the current response to finish before archiving or restoring this conversation.")); item.IsArchived = request.IsArchived.Value; item.ArchivedUtc = item.IsArchived ? DateTime.UtcNow : null; } item.Revision++; item.UpdatedUtc = DateTime.UtcNow; await db.SaveChangesAsync(ct); return Results.Ok(ToSummary(item));
+            if (request.Title is not null) { if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200) return Results.BadRequest(new ErrorResponse("input_limit", "Chat names must be 1–200 characters.")); item.Title = request.Title.Trim(); } if (request.ModelId is not null) item.SelectedModelId = string.IsNullOrWhiteSpace(request.ModelId) ? null : request.ModelId.Trim(); if (request.ProviderId is not null) item.SelectedProviderId = string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId.Trim(); if (request.HarnessMode is not null) item.SelectedHarnessMode = string.IsNullOrWhiteSpace(request.HarnessMode) ? null : request.HarnessMode.Trim(); if (request.WorkspaceRootPath is not null) item.WorkspaceRootPath = string.IsNullOrWhiteSpace(request.WorkspaceRootPath) ? null : request.WorkspaceRootPath.Trim(); if (request.ProjectId.HasValue) { item.ProjectId = request.ProjectId.Value == Guid.Empty ? null : request.ProjectId.Value; } if (request.PermissionPolicyOverride is not null) item.PermissionPolicyOverride = string.IsNullOrWhiteSpace(request.PermissionPolicyOverride) ? null : PermissionPolicies.Normalize(request.PermissionPolicyOverride); if (request.IsArchived is not null) { var active = await db.ChatRuns.AnyAsync(x => x.ConversationId == id && (x.Status == ChatRunStatus.Running || x.Status == ChatRunStatus.Cancelling || x.Status == ChatRunStatus.Queued), ct); if (active) return Results.Conflict(new ErrorResponse("run_active", "Wait for the current response to finish before archiving or restoring this conversation.")); item.IsArchived = request.IsArchived.Value; item.ArchivedUtc = item.IsArchived ? DateTime.UtcNow : null; } item.Revision++; item.UpdatedUtc = DateTime.UtcNow; await db.SaveChangesAsync(ct); return Results.Ok(ToSummary(item));
         });
         app.MapDelete("/conversations/{id:guid}", async (Guid id, IDbContextFactory<GuildhallDbContext> factory, CancellationToken ct) =>
         {
@@ -590,7 +614,7 @@ public static class ChatEndpoints
         dataUri.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[^2] == 0xFF && bytes[^1] == 0xD9 ||
         dataUri.StartsWith("data:image/png;base64,", StringComparison.Ordinal) && bytes.AsSpan().StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }) ||
         dataUri.StartsWith("data:image/webp;base64,", StringComparison.Ordinal) && bytes.Length >= 12 && System.Text.Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && System.Text.Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP";
-    private static ConversationSummary ToSummary(Conversation x) => new(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc, false, x.Revision, x.AgentDefinitionId, null, x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride);
+    private static ConversationSummary ToSummary(Conversation x) => new(x.Id, x.Title, x.SelectedModelId, x.CreatedUtc, x.UpdatedUtc, x.IsArchived, x.ArchivedUtc, false, x.Revision, x.AgentDefinitionId, null, x.SelectedProviderId, x.SelectedHarnessMode, x.WorkspaceRootPath, x.PermissionPolicyOverride, x.ProjectId, x.ActiveWorktreeId);
     private static string DetectContentType(string supplied, byte[] content)
     {
         if (content.AsSpan().StartsWith(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A })) return "image/png";

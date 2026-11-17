@@ -63,8 +63,9 @@ export function toInstructionSlug(name: string): string {
 }
 
 const MCP_TOOL_OPTIONS = [
-  { id: 'filesystem-mcp', label: 'Local Filesystem (Tier 1)' },
+  { id: 'filesystem-mcp', label: 'Local Filesystem (Tier 1/2)' },
   { id: 'git-mcp', label: 'Local Git (Tier 1)' },
+  { id: 'workspace-exec-mcp', label: 'Workspace Commands (Tier 2)' },
   { id: 'github-mcp', label: 'GitHub (Tier 1/3)' },
   { id: 'google-drive-mcp', label: 'Google Drive (Tier 1)' },
   { id: 'gmail-mcp', label: 'Gmail (Tier 1/3)' },
@@ -94,6 +95,7 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
   const [instructionsModalOpen, setInstructionsModalOpen] = useState(false);
   const [markdownError, setMarkdownError] = useState('');
   const [previewExpression, setPreviewExpression] = useState<PortraitExpression | 'auto'>('auto');
+  const [confirmUnrestricted, setConfirmUnrestricted] = useState(false);
   const uploadVersion = useRef(0);
   const latestIdentity = useRef(identity);
   useEffect(() => { latestIdentity.current = identity; }, [identity]);
@@ -234,15 +236,39 @@ export function CouncilMember({ identity, onChange, onClose, storageError, closi
           Tool permission policy
           <select
             aria-label="Tool permission policy"
-            value={permissionPolicy}
+            value={confirmUnrestricted ? 'unrestricted' : permissionPolicy}
             disabled={saving}
-            onChange={event => onUpdateToolPolicy(enabledToolIds, event.target.value)}
+            onChange={event => {
+              const next = event.target.value;
+              if (next === 'unrestricted' && permissionPolicy !== 'unrestricted') {
+                setConfirmUnrestricted(true);
+                return;
+              }
+              setConfirmUnrestricted(false);
+              onUpdateToolPolicy(enabledToolIds, next);
+            }}
           >
-            <option value="ask_unsafe">Ask for unsafe actions (Tier 1 auto, Tier 3 ask)</option>
+            <option value="ask_unsafe">Ask for unsafe actions (Tier 1 auto, Tier 2/3 ask)</option>
             <option value="always_ask">Always ask (every tool call)</option>
-            <option value="unrestricted" disabled>Unrestricted / autopilot (Planned Phase 4)</option>
+            <option value="unrestricted">Unrestricted · danger (auto-run inside workspace)</option>
           </select>
         </label>
+        {confirmUnrestricted && (
+          <div className="unrestricted-confirm" role="region" aria-label="Confirm unrestricted member policy">
+            <p><strong>Danger:</strong> Unrestricted mode auto-approves workspace edits and commands for this member without prompting.</p>
+            <div className="settings-choice-row">
+              <button
+                type="button"
+                className="danger-button"
+                disabled={saving}
+                onClick={() => { setConfirmUnrestricted(false); onUpdateToolPolicy(enabledToolIds, 'unrestricted'); }}
+              >
+                Enable Unrestricted
+              </button>
+              <button type="button" disabled={saving} onClick={() => setConfirmUnrestricted(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
       </section>
     )}
     {config && profileId && (

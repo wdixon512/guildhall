@@ -12,11 +12,23 @@ public static class PermissionPolicies
 {
     public const string AlwaysAsk = "always_ask";
     public const string AskUnsafe = "ask_unsafe";
+    public const string Unrestricted = "unrestricted";
 
     public static string Normalize(string? value) =>
         string.Equals(value, AlwaysAsk, StringComparison.OrdinalIgnoreCase)
             ? AlwaysAsk
-            : AskUnsafe;
+            : string.Equals(value, Unrestricted, StringComparison.OrdinalIgnoreCase)
+                ? Unrestricted
+                : AskUnsafe;
+
+    public static string ResolveEffective(string? workspaceOverride, string? conversationOverride, string? memberPolicy)
+    {
+        if (!string.IsNullOrWhiteSpace(workspaceOverride))
+            return Normalize(workspaceOverride);
+        if (!string.IsNullOrWhiteSpace(conversationOverride))
+            return Normalize(conversationOverride);
+        return Normalize(memberPolicy);
+    }
 }
 
 public enum GateOutcome
@@ -49,12 +61,27 @@ public sealed class ToolPermissionGate(ExfiltrationGuard exfiltrationGuard)
                 $"MCP server '{serverId}' is not enabled for this council member.");
         }
 
+        var normalizedPolicy = PermissionPolicies.Normalize(policy);
+
         if (string.Equals(securityTier, ToolSecurityTiers.Tier2, StringComparison.OrdinalIgnoreCase))
         {
+            if (exfiltrationGuard.ContainsSensitiveSecret(argumentsJson))
+            {
+                return new ToolGateDecision(
+                    GateOutcome.Deny,
+                    "exfiltration_blocked",
+                    "Blocked workspace mutation: arguments contain a sensitive secret or credential.");
+            }
+
+            if (normalizedPolicy == PermissionPolicies.Unrestricted)
+                return new ToolGateDecision(GateOutcome.Allow, null, null);
+
             return new ToolGateDecision(
-                GateOutcome.Deny,
-                "tier2_planned_phase4",
-                $"Tool '{toolName}' requires Tier 2 workspace write/worktree permissions (planned for Phase 4).");
+                GateOutcome.RequireApproval,
+                null,
+                normalizedPolicy == PermissionPolicies.AlwaysAsk
+                    ? $"Policy is set to Always ask: approve workspace tool '{toolName}' before execution."
+                    : $"Tool '{toolName}' modifies the workspace (Tier 2) and requires human approval.");
         }
 
         if (string.Equals(securityTier, ToolSecurityTiers.Tier3, StringComparison.OrdinalIgnoreCase))
@@ -67,6 +94,8 @@ public sealed class ToolPermissionGate(ExfiltrationGuard exfiltrationGuard)
                     "Blocked outbound tool call: arguments contain a sensitive secret or credential.");
             }
 
+            // Tier 3 (external/remote side effects) always requires a human, even in Unrestricted:
+            // Unrestricted is scoped to the local project/worktree, where rollback is possible.
             return new ToolGateDecision(
                 GateOutcome.RequireApproval,
                 null,
@@ -80,7 +109,6 @@ public sealed class ToolPermissionGate(ExfiltrationGuard exfiltrationGuard)
 
         if (string.Equals(securityTier, ToolSecurityTiers.Tier1, StringComparison.OrdinalIgnoreCase))
         {
-            var normalizedPolicy = PermissionPolicies.Normalize(policy);
             if (normalizedPolicy == PermissionPolicies.AlwaysAsk)
             {
                 return new ToolGateDecision(

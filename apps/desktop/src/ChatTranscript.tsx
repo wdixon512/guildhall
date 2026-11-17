@@ -1,5 +1,5 @@
 import type { KeyboardEvent, RefObject, WheelEvent } from 'react';
-import type { AgentProfile, Bootstrap, ConversationDetails, MessageView, Readiness } from './api';
+import type { AgentProfile, Bootstrap, ConversationDetails, MessageView, Readiness, RegisteredProject } from './api';
 import { AssistantResponse } from './AssistantResponse';
 import { Portrait } from './CouncilMember';
 import type { MemberIdentity } from './CouncilMember';
@@ -64,6 +64,16 @@ export interface ChatTranscriptProps {
   onSelectStarter: (suggestion: string) => void;
   onSaveToMemory: (text: string, trigger: HTMLElement) => void;
   onResolveToolDecision?: (runId: string, eventId: string, approved: boolean) => void;
+  onRollbackToolEvent?: (runId: string, eventId: string) => void;
+  projects?: RegisteredProject[];
+  selectedProjectId?: string | null;
+  branches?: string[];
+  selectedBranch?: string;
+  isolateNewWorktree?: boolean;
+  onSelectProject?: (project: RegisteredProject | null) => void;
+  onSelectBranch?: (branch: string) => void;
+  onBrowseProject?: () => void;
+  onToggleIsolateNewWorktree?: (value: boolean) => void;
 }
 
 export function ChatTranscript({
@@ -80,6 +90,16 @@ export function ChatTranscript({
   onSelectStarter,
   onSaveToMemory,
   onResolveToolDecision,
+  onRollbackToolEvent,
+  projects = [],
+  selectedProjectId = null,
+  branches = [],
+  selectedBranch = '',
+  isolateNewWorktree = false,
+  onSelectProject,
+  onSelectBranch,
+  onBrowseProject,
+  onToggleIsolateNewWorktree,
 }: ChatTranscriptProps) {
   const queuedTurns = queuedPairs(conversation?.messages ?? []);
 
@@ -107,6 +127,69 @@ export function ChatTranscript({
                 </button>
               ))}
             </div>
+            {onSelectProject && (
+              <div className="welcome-project-picker" aria-label="Choose project for session">
+                <div className="welcome-project-row">
+                  <span className="welcome-project-icon" aria-hidden="true">
+                    <Icon name="folder" size={15} />
+                  </span>
+                  <select
+                    className="workspace-project-select"
+                    aria-label="Session project"
+                    value={selectedProjectId ?? ''}
+                    onChange={e => {
+                      const found = projects.find(p => p.id === e.target.value) ?? null;
+                      onSelectProject(found);
+                    }}
+                  >
+                    <option value="">No project selected</option>
+                    {projects.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {onBrowseProject && (
+                    <button type="button" className="welcome-browse-btn" onClick={onBrowseProject}>Browse…</button>
+                  )}
+                </div>
+                {(() => {
+                  const chosen = projects.find(p => p.id === selectedProjectId);
+                  if (!chosen?.isGitRepository || conversation?.conversation.activeWorktreeId) return null;
+                  return (
+                    <div className="welcome-project-stack">
+                      {branches.length > 0 && onSelectBranch && (
+                        <div className="welcome-project-row">
+                          <span className="welcome-project-icon" aria-hidden="true">
+                            <Icon name="branch" size={15} />
+                          </span>
+                          <select
+                            className="workspace-project-select welcome-branch-select"
+                            aria-label="Base branch"
+                            value={selectedBranch}
+                            onChange={e => onSelectBranch(e.target.value)}
+                          >
+                            {branches.map(b => (
+                              <option key={b} value={b}>{b}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      {onToggleIsolateNewWorktree && (
+                        <label className="welcome-worktree-check" title="Creates an isolated Git branch on first message">
+                          <input
+                            type="checkbox"
+                            checked={isolateNewWorktree}
+                            onChange={e => onToggleIsolateNewWorktree(e.target.checked)}
+                          />
+                          <span>New worktree</span>
+                        </label>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
         {conversation && [...conversation.messages]
@@ -157,6 +240,7 @@ export function ChatTranscript({
                     events={message.events}
                     busy={toolActionBusy}
                     onResolveDecision={onResolveToolDecision}
+                    onRollback={onRollbackToolEvent}
                   />
                 )}
               </div>

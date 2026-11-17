@@ -64,6 +64,36 @@ public sealed class McpExternalProvidersTests
     }
 
     [Fact]
+    public async Task GitHubProviderListsRepositoriesWithoutOwnerOrRepo()
+    {
+        var handler = new StubHttpHandler(req =>
+        {
+            if (req.RequestUri!.PathAndQuery == "/user/repos?visibility=private&sort=updated&per_page=50")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """[{"full_name":"wdixon512/guildhall","private":true,"description":"Local council","html_url":"https://github.com/wdixon512/guildhall","default_branch":"main","updated_at":"2026-11-17T00:00:00Z","extra_unused_field":"trimmed"}]""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var creds = new FakeCredentialStore(new Dictionary<string, string> { ["github-mcp"] = "ghp_testtoken1234" });
+        var provider = new GitHubMcpProvider(new StubFactory(handler, new Uri("https://api.github.com")), creds);
+
+        var result = await provider.InvokeAsync(
+            new McpToolCallRequest("github-mcp", "github_list_repositories", JsonDocument.Parse("""{"visibility":"private","perPage":99}""").RootElement, null),
+            default);
+
+        Assert.False(result.IsError);
+        Assert.Contains("wdixon512/guildhall", result.Content);
+        Assert.DoesNotContain("extra_unused_field", result.Content);
+    }
+
+    [Fact]
     public async Task GoogleDriveProviderSearchesAndExportsGoogleDocs()
     {
         var handler = new StubHttpHandler(req =>

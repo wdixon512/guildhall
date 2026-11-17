@@ -88,3 +88,7 @@ Additional November 16 owner follow-ups ([docs/2026-11-16.md](../2026-11-16.md))
 - Add one-click copy buttons to formatted terminal/code blocks.
 - Organize `docs/` under `docs/masterplan/` (`phase 0/`, `phase 1/`) and organize `scripts/` into `database/`, `startup/`, `sql/`, and `misc/`, with a spend-conscious CI test pipeline.
 - **Deferral of C15 / C16 / Q06 (Native JSON Export, SQL Backup/Restore Verification, & Live Model Benchmarks):** By owner direction (November 16, 2026), native JSON export verification (C15/C16), isolated SQL backup/restore verification (tracked in Phase 5), and formal live local-model speed/quality benchmarks (`CPU` vs. `GPU` / `KeepModelWarmSeconds`, tracked in Phase 8) are deferred to later phases and do not gate Phase 1 completion.
+
+## November 17 Phase 4 Post-QC UX Follow-Up
+
+- **Git Changes / Worktree Diff View Redesign (Deferred to later phase):** By owner direction after Phase 4 QC sign-off, revisit and redesign the **Git changes / Worktree diff review** panel (`WorktreeDiffDrawer`) for richer ergonomics (per-file collapsible diff accordions, side-by-side or split diff toggle, line-level revision comments, and one-click open worktree folder in File Explorer).

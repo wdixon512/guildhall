@@ -98,9 +98,108 @@ fn open_external_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn pick_workspace_folder() -> Result<Option<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        tauri::async_runtime::spawn_blocking(|| {
+            let script = concat!(
+                "$code = @'\n",
+                "using System;\n",
+                "using System.Runtime.InteropServices;\n",
+                "public static class ModernFolderPicker {\n",
+                "    [DllImport(\"user32.dll\")] private static extern IntPtr GetForegroundWindow();\n",
+                "    [ComImport, Guid(\"DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7\")] private class FileOpenDialog {}\n",
+                "    [ComImport, Guid(\"42f85136-db7e-439c-85f1-e4075d135fc8\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n",
+                "    private interface IFileDialog {\n",
+                "        [PreserveSig] int Show(IntPtr hwndOwner);\n",
+                "        void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);\n",
+                "        void SetFileTypeIndex(uint iFileType);\n",
+                "        void GetFileTypeIndex(out uint piFileType);\n",
+                "        void Advise(IntPtr pfde, out uint pdwCookie);\n",
+                "        void Unadvise(uint dwCookie);\n",
+                "        void SetOptions(uint fos);\n",
+                "        void GetOptions(out uint pfos);\n",
+                "        void SetDefaultFolder(IShellItem psi);\n",
+                "        void SetFolder(IShellItem psi);\n",
+                "        void GetFolder(out IShellItem ppsi);\n",
+                "        void GetCurrentSelection(out IShellItem ppsi);\n",
+                "        void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);\n",
+                "        void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);\n",
+                "        void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);\n",
+                "        void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);\n",
+                "        void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);\n",
+                "        void GetResult(out IShellItem ppsi);\n",
+                "        void AddPlace(IShellItem psi, int fdap);\n",
+                "        void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string pszDefaultExtension);\n",
+                "        void Close(int hr);\n",
+                "        void SetClientGuid(ref Guid guid);\n",
+                "        void ClearClientData();\n",
+                "        void SetFilter(IntPtr pFilter);\n",
+                "    }\n",
+                "    [ComImport, Guid(\"43826D1E-E718-42EE-BC55-A1E261C37BFE\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n",
+                "    private interface IShellItem {\n",
+                "        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);\n",
+                "        void GetParent(out IShellItem ppsi);\n",
+                "        void GetDisplayName(uint sigdnName, out IntPtr ppszName);\n",
+                "        void GetAttributes(uint sfgaoMask, out uint psfgaoAttribs);\n",
+                "        void Compare(IShellItem psi, uint hint, out int piOrder);\n",
+                "    }\n",
+                "    public static string Pick() {\n",
+                "        var dlg = (IFileDialog)new FileOpenDialog();\n",
+                "        try {\n",
+                "            uint opts;\n",
+                "            dlg.GetOptions(out opts);\n",
+                "            dlg.SetOptions(opts | 0x20u | 0x40u | 0x08u);\n",
+                "            dlg.SetTitle(\"Select a local project folder for Guildhall\");\n",
+                "            int hr = dlg.Show(GetForegroundWindow());\n",
+                "            if (hr != 0) return null;\n",
+                "            IShellItem item;\n",
+                "            dlg.GetResult(out item);\n",
+                "            try {\n",
+                "                IntPtr psz;\n",
+                "                item.GetDisplayName(0x80058000u, out psz);\n",
+                "                try { return Marshal.PtrToStringUni(psz); }\n",
+                "                finally { Marshal.FreeCoTaskMem(psz); }\n",
+                "            } finally { Marshal.ReleaseComObject(item); }\n",
+                "        } finally { Marshal.ReleaseComObject(dlg); }\n",
+                "    }\n",
+                "}\n",
+                "'@\n",
+                "Add-Type -TypeDefinition $code\n",
+                "$path = [ModernFolderPicker]::Pick()\n",
+                "if ($path) { [Console]::Out.Write($path) }"
+            );
+            let output = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-STA", "-WindowStyle", "Hidden", "-Command", script])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .map_err(|_| "Could not open folder picker".to_string())?;
+            if !output.status.success() {
+                return Err("Folder picker failed".to_string());
+            }
+            let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(if selected.is_empty() { None } else { Some(selected) })
+        })
+        .await
+        .map_err(|_| "Folder picker task failed".to_string())?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(None)
+    }
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![bootstrap, open_external_url])
+        .invoke_handler(tauri::generate_handler![
+            bootstrap,
+            open_external_url,
+            pick_workspace_folder
+        ])
         .setup(|app| {
             let mut window_config = app.config().app.windows[0].clone();
             #[cfg(debug_assertions)]

@@ -12,6 +12,8 @@ public sealed class GitHubMcpProvider(
 {
     private static readonly IReadOnlyList<McpToolDescriptor> Tools =
     [
+        CreateDescriptor("github_list_repositories", "List GitHub repositories for the authenticated user (read-only).", ToolSecurityTiers.Tier1,
+            """{"type":"object","properties":{"visibility":{"type":"string","enum":["all","public","private"],"description":"Repository visibility filter (default 'all')."},"perPage":{"type":"integer","description":"Number of repositories to return (1-50, default 30)."}},"required":[]}"""),
         CreateDescriptor("github_get_repository", "Get metadata for a GitHub repository (read-only).", ToolSecurityTiers.Tier1,
             """{"type":"object","properties":{"owner":{"type":"string"},"repo":{"type":"string"}},"required":["owner","repo"]}"""),
         CreateDescriptor("github_list_issues", "List open issues in a GitHub repository (read-only).", ToolSecurityTiers.Tier1,
@@ -55,6 +57,18 @@ public sealed class GitHubMcpProvider(
         if (string.IsNullOrWhiteSpace(token))
             return new McpToolCallResult(true, "GitHub token is not configured in Connections.", "provider_auth_failed");
 
+        var client = httpClients.CreateClient("github-api");
+
+        if (request.ToolName == "github_list_repositories")
+        {
+            var rawVisibility = GetString(request.Arguments, "visibility");
+            var visibility = rawVisibility is "public" or "private" ? rawVisibility : "all";
+            var perPage = TryGetInt(request.Arguments, "perPage", out var parsedPerPage)
+                ? Math.Clamp(parsedPerPage, 1, 50)
+                : 30;
+            return await ListRepositoriesAsync(client, token, visibility, perPage, cancellationToken);
+        }
+
         var owner = GetString(request.Arguments, "owner");
         var repo = GetString(request.Arguments, "repo");
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
@@ -62,7 +76,6 @@ public sealed class GitHubMcpProvider(
 
         var safeOwner = Uri.EscapeDataString(owner);
         var safeRepo = Uri.EscapeDataString(repo);
-        var client = httpClients.CreateClient("github-api");
 
         switch (request.ToolName)
         {
@@ -103,6 +116,51 @@ public sealed class GitHubMcpProvider(
             }
             default:
                 return new McpToolCallResult(true, $"Unknown tool '{request.ToolName}'.", "tool_not_found");
+        }
+    }
+
+    private static async Task<McpToolCallResult> ListRepositoriesAsync(
+        HttpClient client,
+        string token,
+        string visibility,
+        int perPage,
+        CancellationToken cancellationToken)
+    {
+        var result = await ExecuteJsonAsync(
+            client,
+            HttpMethod.Get,
+            $"/user/repos?visibility={Uri.EscapeDataString(visibility)}&sort=updated&per_page={perPage}",
+            token,
+            null,
+            cancellationToken);
+        if (result.IsError)
+            return result;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(result.Content);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return result;
+
+            var compact = new List<object>();
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                compact.Add(new
+                {
+                    full_name = item.TryGetProperty("full_name", out var fn) ? fn.GetString() : null,
+                    @private = item.TryGetProperty("private", out var pr) && pr.ValueKind == JsonValueKind.True,
+                    description = item.TryGetProperty("description", out var desc) && desc.ValueKind == JsonValueKind.String ? desc.GetString() : null,
+                    html_url = item.TryGetProperty("html_url", out var url) ? url.GetString() : null,
+                    default_branch = item.TryGetProperty("default_branch", out var db) ? db.GetString() : null,
+                    updated_at = item.TryGetProperty("updated_at", out var ua) ? ua.GetString() : null,
+                });
+            }
+
+            return new McpToolCallResult(false, JsonSerializer.Serialize(compact));
+        }
+        catch (JsonException)
+        {
+            return result;
         }
     }
 

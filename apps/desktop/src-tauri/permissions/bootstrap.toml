@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-bootstrap"
-description = "Read session configuration and open validated external http/https links for the main desktop window."
-commands.allow = ["bootstrap", "open_external_url"]
+description = "Read session configuration, pick a local project folder, and open validated external http/https links for the main desktop window."
+commands.allow = ["bootstrap", "open_external_url", "pick_workspace_folder"]

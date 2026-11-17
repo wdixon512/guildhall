@@ -17,12 +17,12 @@ public sealed class ToolPermissionGateTests
     }
 
     [Fact]
-    public void DeniesTier2ToolsAsPlannedForPhase4()
+    public void Tier2WritesRequireApprovalUnderAskUnsafe()
     {
         var decision = _gate.Evaluate(PermissionPolicies.AskUnsafe, Enabled, "filesystem-mcp", "fs_write_file", ToolSecurityTiers.Tier2, "{}");
 
-        Assert.Equal(GateOutcome.Deny, decision.Outcome);
-        Assert.Equal("tier2_planned_phase4", decision.ErrorCode);
+        Assert.Equal(GateOutcome.RequireApproval, decision.Outcome);
+        Assert.Null(decision.ErrorCode);
     }
 
     [Fact]

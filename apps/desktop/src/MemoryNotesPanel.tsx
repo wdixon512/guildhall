@@ -7,6 +7,7 @@ export function MemoryNotesPanel({
   config,
   scope,
   agentDefinitionId,
+  projectId,
   title,
   description,
   refreshKey = 0,
@@ -14,6 +15,7 @@ export function MemoryNotesPanel({
   config: Bootstrap | null;
   scope: MemoryNoteScope;
   agentDefinitionId?: string;
+  projectId?: string;
   title: string;
   description: string;
   refreshKey?: number;
@@ -29,7 +31,7 @@ export function MemoryNotesPanel({
   const [modalError, setModalError] = useState('');
   const [error, setError] = useState('');
 
-  const canLoad = !!config && (scope === 'AboutYou' || !!agentDefinitionId);
+  const canLoad = !!config && (scope === 'AboutYou' || (scope === 'Member' && !!agentDefinitionId) || (scope === 'Project' && !!projectId));
 
   async function loadNotes(search = query, signal?: AbortSignal) {
     if (!canLoad || !config) return;
@@ -38,6 +40,7 @@ export function MemoryNotesPanel({
     try {
       const params = new URLSearchParams({ scope });
       if (scope === 'Member' && agentDefinitionId) params.set('agentDefinitionId', agentDefinitionId);
+      if (scope === 'Project' && projectId) params.set('projectId', projectId);
       if (search.trim()) params.set('query', search.trim());
       const items = await request(config, `/memory-notes?${params.toString()}`, signal ?? new AbortController().signal) as MemoryNote[];
       if (!signal?.aborted) setNotes(Array.isArray(items) ? items : []);
@@ -59,7 +62,7 @@ export function MemoryNotesPanel({
     const controller = new AbortController();
     void loadNotes(query, controller.signal);
     return () => controller.abort();
-  }, [config?.hostUrl, config?.token, scope, agentDefinitionId, query, refreshKey]);
+  }, [config?.hostUrl, config?.token, scope, agentDefinitionId, projectId, query, refreshKey]);
 
   async function addNote() {
     if (!config || !canLoad || creating) return;
@@ -74,6 +77,7 @@ export function MemoryNotesPanel({
         body: JSON.stringify({
           scope,
           agentDefinitionId: scope === 'Member' ? agentDefinitionId : null,
+          projectId: scope === 'Project' ? projectId : null,
           body: trimmed,
           isEnabled: true,
         }),
@@ -152,7 +156,13 @@ export function MemoryNotesPanel({
       <div className="memory-add">
         <textarea
           aria-label={`New ${title.toLowerCase()} note`}
-          placeholder={scope === 'AboutYou' ? 'Add a shared preference or fact for all members…' : 'Add a private note for this member…'}
+          placeholder={
+            scope === 'AboutYou'
+              ? 'Add a shared preference or fact for all members…'
+              : scope === 'Project'
+                ? 'Add a note for this project…'
+                : 'Add a private note for this member…'
+          }
           maxLength={2000}
           rows={3}
           value={draft}
@@ -217,7 +227,13 @@ export function MemoryNotesPanel({
       <TextEditorModal
         open={expandDraft}
         title={`New ${title.toLowerCase()} note`}
-        subtitle={scope === 'AboutYou' ? 'Shared with every guild member.' : 'Private to this guild member.'}
+        subtitle={
+          scope === 'AboutYou'
+            ? 'Shared with every guild member.'
+            : scope === 'Project'
+              ? 'Shared across Council Members for this project.'
+              : 'Private to this guild member.'
+        }
         value={draft}
         maxLength={2000}
         saveLabel="Apply"

@@ -107,6 +107,39 @@ public sealed class WorkspacePathGuard
         return new PathValidationResult(true, fullTarget, null, null);
     }
 
+    public PathValidationResult ValidateWritePath(string? workspaceRoot, string? requestedPath)
+    {
+        var readCheck = ValidateReadPath(workspaceRoot, requestedPath);
+        if (!readCheck.IsAllowed || readCheck.FullPath is null)
+            return readCheck;
+
+        var normalizedRoot = Path.GetFullPath(workspaceRoot!.Trim())
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (string.Equals(readCheck.FullPath, normalizedRoot, PathComparison))
+        {
+            return new PathValidationResult(
+                false,
+                null,
+                "invalid_write_target",
+                "Access denied: cannot overwrite or delete the workspace root directory itself.");
+        }
+
+        var rel = Path.GetRelativePath(normalizedRoot, readCheck.FullPath).Replace('\\', '/');
+        if (rel.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
+            rel.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
+            rel.Equals(".guildhall-worktrees", StringComparison.OrdinalIgnoreCase) ||
+            rel.StartsWith(".guildhall-worktrees/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PathValidationResult(
+                false,
+                null,
+                "protected_git_metadata",
+                "Access denied: direct writes to .git or worktree metadata are blocked.");
+        }
+
+        return readCheck;
+    }
+
     public static bool IsSensitivePath(string fullPath)
     {
         var fileName = Path.GetFileName(fullPath);

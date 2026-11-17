@@ -62,7 +62,7 @@ public sealed class CouncilMemberArchiveSqlTests
             await sql.OpenAsync();
             async Task<string> Snapshot(string table)
             {
-                await using var columns = new SqlCommand("SELECT STRING_AGG(CONVERT(nvarchar(max), QUOTENAME(name)), ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id = OBJECT_ID(@table) AND NOT (@table = 'dbo.AgentDefinitions' AND name IN ('IsArchived', 'DefaultProviderId', 'DefaultHarnessMode', 'EnabledToolIdsJson', 'PermissionPolicy')) AND NOT (@table = 'dbo.Conversations' AND name IN ('SelectedProviderId', 'SelectedHarnessMode', 'WorkspaceRootPath', 'PermissionPolicyOverride')) AND NOT (@table = 'dbo.ChatRuns' AND name IN ('EngineKind', 'InputTokens', 'OutputTokens', 'EstimatedCostUsd', 'CostSource', 'DurationMs'))", sql);
+                await using var columns = new SqlCommand("SELECT STRING_AGG(CONVERT(nvarchar(max), QUOTENAME(name)), ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id = OBJECT_ID(@table) AND NOT (@table = 'dbo.AgentDefinitions' AND name IN ('IsArchived', 'DefaultProviderId', 'DefaultHarnessMode', 'EnabledToolIdsJson', 'PermissionPolicy')) AND NOT (@table = 'dbo.Conversations' AND name IN ('SelectedProviderId', 'SelectedHarnessMode', 'WorkspaceRootPath', 'PermissionPolicyOverride', 'ProjectId', 'ActiveWorktreeId')) AND NOT (@table = 'dbo.ChatRuns' AND name IN ('EngineKind', 'InputTokens', 'OutputTokens', 'EstimatedCostUsd', 'CostSource', 'DurationMs'))", sql);
                 columns.Parameters.AddWithValue("@table", "dbo." + table);
                 var projection = (string)(await columns.ExecuteScalarAsync())!;
                 await using var query = new SqlCommand($"SELECT {projection} FROM dbo.[{table}] ORDER BY Id FOR JSON PATH, INCLUDE_NULL_VALUES", sql);
@@ -75,7 +75,7 @@ public sealed class CouncilMemberArchiveSqlTests
             foreach (var table in tables) snapshots.Add(table, await Snapshot(table));
             await using (var upgrade = new GuildhallDbContext(options))
             {
-                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings", "20261116232856_MemoryNotes", "20261117002946_Phase2BackingEngines", "20261117024435_Phase3McpToolsAndTraces" }, await upgrade.Database.GetPendingMigrationsAsync());
+                Assert.Equal(new[] { "20261116021040_CouncilMemberArchive", "20261116134707_CouncilMemberDeletionPermission", "20261116140438_GuildhallBehaviorSettings", "20261116232856_MemoryNotes", "20261117002946_Phase2BackingEngines", "20261117024435_Phase3McpToolsAndTraces", "20261117044509_Phase4ProjectsWorktreesAndRollbacks" }, await upgrade.Database.GetPendingMigrationsAsync());
                 await upgrade.Database.MigrateAsync();
                 await upgrade.Database.MigrateAsync();
                 Assert.Empty(await upgrade.Database.GetPendingMigrationsAsync());

@@ -1,9 +1,9 @@
-export type IconName = 'chat' | 'council' | 'folder' | 'spark' | 'settings' | 'search' | 'plus' | 'close' | 'panel' | 'attach' | 'send' | 'chevron' | 'archive' | 'edit' | 'trash' | 'gate' | 'connections' | 'clock' | 'shield' | 'copy' | 'check';
+export type IconName = 'chat' | 'council' | 'folder' | 'branch' | 'spark' | 'settings' | 'search' | 'plus' | 'close' | 'panel' | 'attach' | 'send' | 'chevron' | 'archive' | 'edit' | 'trash' | 'gate' | 'connections' | 'clock' | 'shield' | 'copy' | 'check';
 const paths: Record<IconName, string> = {
   connections: 'M8 3v5M16 3v5M5 8h14v3a7 7 0 0 1-14 0V8ZM12 18v4',
   chat: 'M21 11.5a8.5 8.5 0 0 1-8.5 8.5H8l-5 2 1.7-5A8.5 8.5 0 1 1 21 11.5Z',
   council: 'M4 4h4v16H4zM10 3h4v17h-4zM16 5h4v15h-4z',
-  folder: 'M3 6h7l2 3h9v11H3V6Z', spark: 'm12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8L12 2Z',
+  folder: 'M3 6h7l2 3h9v11H3V6Z', branch: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 9a9 9 0 0 1-9 9', spark: 'm12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8L12 2Z',
   settings: 'm9 3 1-1h4l1 3 3 1 3 1v4l-2 2-1 3-2 3h-4l-2-2-3-1-3-2v-4l2-2 1-3 2-2ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   search: 'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-2 5 6 6', plus: 'M12 4v16M4 12h16', close: 'm6 6 12 12M18 6 6 18',
   panel: 'M3 4h18v16H3zM9 4v16', attach: 'M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.82l8.49-8.48',
