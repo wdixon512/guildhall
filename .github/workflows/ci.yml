@@ -3,20 +3,24 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - '.cursor/**'
-      - '.editorconfig'
-      - 'scripts/sql/**'
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - '.agents/index/**'
+      - '!.cursor/**'
+      - '!.editorconfig'
+      - '!scripts/sql/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - '.cursor/**'
-      - '.editorconfig'
-      - 'scripts/sql/**'
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - '.agents/index/**'
+      - '!.cursor/**'
+      - '!.editorconfig'
+      - '!scripts/sql/**'
   workflow_dispatch:
     inputs:
       run_rust_tests:
@@ -64,6 +68,11 @@ jobs:
           node-version: '24.13.0'
           cache: 'npm'
           cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Validate codebase workflow index
+        run: |
+          python3 scripts/index_doc.py --self-check
+          python3 scripts/index_doc.py --release-ready
 
       - name: Validate PowerShell 7 script syntax
         shell: pwsh

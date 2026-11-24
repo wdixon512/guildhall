@@ -1,0 +1,1453 @@
+{
+  "schema_version": 1,
+  "workflows": {
+    "backing-engine-streaming-adapters": {
+      "card": ".agents/index/workflows/backing-engine-streaming-adapters.md",
+      "title": "Backing Engine Streaming Adapters",
+      "area": "chat-runtime-engines",
+      "triggers": [
+        "IBackingEngine",
+        "BackingEngineRegistry",
+        "OllamaBackingEngine",
+        "OpenAiCloudEngine",
+        "GeminiCloudEngine",
+        "AnthropicCloudEngine",
+        "SseStreamReader",
+        "CliHarnessEngineBase",
+        "guildhall-tool-call"
+      ],
+      "primary_files": [
+        "services/agent-host/Providers/IBackingEngine.cs",
+        "services/agent-host/Providers/BackingEngineRegistry.cs",
+        "services/agent-host/Providers/Ollama/OllamaBackingEngine.cs",
+        "services/agent-host/Providers/Cloud/OpenAiCloudEngine.cs",
+        "services/agent-host/Providers/Cloud/GeminiCloudEngine.cs",
+        "services/agent-host/Providers/Cloud/AnthropicCloudEngine.cs",
+        "services/agent-host/Providers/Cloud/SseStreamReader.cs",
+        "services/agent-host/Providers/Cli/CliHarnessEngine.cs",
+        "services/agent-host/Providers/Cli/CliHarnessDescriptors.cs",
+        "services/agent-host/Providers/Cli/CliProcessRunner.cs",
+        "services/agent-host/Providers/Cli/CliHarnessAdapters.cs",
+        "services/agent-host/Configuration/EnvironmentScrubber.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Providers/IBackingEngine.cs::IBackingEngine",
+        "services/agent-host/Providers/BackingEngineRegistry.cs::BackingEngineRegistry.Resolve",
+        "services/agent-host/Providers/Ollama/OllamaBackingEngine.cs::OllamaBackingEngine.StreamTurnAsync",
+        "services/agent-host/Providers/Cloud/OpenAiCloudEngine.cs::OpenAiCloudEngine.StreamTurnAsync",
+        "services/agent-host/Providers/Cloud/GeminiCloudEngine.cs::GeminiCloudEngine.StreamTurnAsync",
+        "services/agent-host/Providers/Cloud/AnthropicCloudEngine.cs::AnthropicCloudEngine.StreamTurnAsync",
+        "services/agent-host/Providers/Cloud/SseStreamReader.cs::SseStreamReader.ReadDataEventsAsync",
+        "services/agent-host/Providers/Cli/CliHarnessEngine.cs::CliHarnessEngineBase.StreamTurnAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "builtin-workspace-and-external-mcp": {
+      "card": ".agents/index/workflows/builtin-workspace-and-external-mcp.md",
+      "title": "Built-In Workspace & External SaaS MCP Providers",
+      "area": "mcp-tools-security-gate",
+      "triggers": [
+        "WorkspacePathGuard",
+        "filesystem-mcp",
+        "git-mcp",
+        "workspace-exec-mcp",
+        "github-mcp",
+        "google-drive-mcp",
+        "gmail-mcp"
+      ],
+      "primary_files": [
+        "services/agent-host/Security/WorkspacePathGuard.cs",
+        "services/agent-host/Mcp/Providers/LocalFilesystemMcpProvider.cs",
+        "services/agent-host/Mcp/Providers/LocalGitMcpProvider.cs",
+        "services/agent-host/Mcp/Providers/LocalCommandMcpProvider.cs",
+        "services/agent-host/Mcp/Providers/GitHubMcpProvider.cs",
+        "services/agent-host/Mcp/Providers/GoogleDriveMcpProvider.cs",
+        "services/agent-host/Mcp/Providers/GmailMcpProvider.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Security/WorkspacePathGuard.cs::WorkspacePathGuard.ValidateWritePath",
+        "services/agent-host/Mcp/Providers/LocalFilesystemMcpProvider.cs::LocalFilesystemMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/LocalGitMcpProvider.cs::LocalGitMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/LocalCommandMcpProvider.cs::LocalCommandMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/GitHubMcpProvider.cs::GitHubMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/GoogleDriveMcpProvider.cs::GoogleDriveMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/GmailMcpProvider.cs::GmailMcpProvider.InvokeAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "chat-queue-send-now-and-recovery": {
+      "card": ".agents/index/workflows/chat-queue-send-now-and-recovery.md",
+      "title": "Chat Queue, Send-Now & Recovery",
+      "area": "chat-runtime-engines",
+      "triggers": [
+        "POST /conversations/{id}/messages",
+        "POST /runs/{id}/promote",
+        "POST /runs/{id}/cancel",
+        "GET /attachments/{id}",
+        "send_now",
+        "ChatRunner",
+        "ChatRecoveryService",
+        "ReconcileAsync",
+        "MutationGate"
+      ],
+      "primary_files": [
+        "apps/desktop/src/ChatComposer.tsx",
+        "apps/desktop/src/App.tsx",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Chat/ChatRunner.cs",
+        "services/agent-host/Chat/ChatRecovery.cs",
+        "apps/desktop/src/ChatTranscript.tsx"
+      ],
+      "anchors": [
+        "apps/desktop/src/ChatComposer.tsx::ChatComposer.addAttachments",
+        "apps/desktop/src/App.tsx::promoteQueuedMessage",
+        "apps/desktop/src/App.tsx::sendMessage",
+        "services/agent-host/Api/ChatEndpoints.cs::ChatEndpoints.RequestFingerprint",
+        "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ExecuteAsync",
+        "services/agent-host/Chat/ChatRunner.cs::ChatRunner.SaveCheckpointAsync",
+        "services/agent-host/Chat/ChatRecovery.cs::ChatRecoveryService.ReconcileAsync",
+        "apps/desktop/src/ChatTranscript.tsx::ChatTranscript"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "connections-catalog-and-discovery": {
+      "card": ".agents/index/workflows/connections-catalog-and-discovery.md",
+      "title": "Connections Catalog & Model Discovery",
+      "area": "chat-runtime-engines",
+      "triggers": [
+        "GET /connections",
+        "POST /connections/{id}/probe",
+        "PUT /connections/{id}/api-key",
+        "POST /connections/{id}/sign-in",
+        "ConnectionCatalogService",
+        "OllamaDiscovery",
+        "ConnectionsCatalog",
+        "agy-cli"
+      ],
+      "primary_files": [
+        "apps/desktop/src/ConnectionsCatalog.tsx",
+        "apps/desktop/src/App.tsx",
+        "services/agent-host/Api/ConnectionEndpoints.cs",
+        "services/agent-host/Providers/ConnectionCatalogService.cs",
+        "services/agent-host/Providers/Ollama/OllamaDiscovery.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/ConnectionsCatalog.tsx::ConnectionsCatalog",
+        "apps/desktop/src/App.tsx::probeAllConnections",
+        "services/agent-host/Api/ConnectionEndpoints.cs::ConnectionEndpoints.MapConnections",
+        "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.GetCatalogAsync",
+        "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.BuildCloudEntryAsync",
+        "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.BuildCliEntryAsync",
+        "services/agent-host/Providers/Ollama/OllamaDiscovery.cs::OllamaDiscovery.DiscoverAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "council-member-lifecycle": {
+      "card": ".agents/index/workflows/council-member-lifecycle.md",
+      "title": "Council Member Lifecycle & Profile Editor",
+      "area": "council-memory-context",
+      "triggers": [
+        "/agents",
+        "/agents/{id}/lifecycle",
+        "CouncilSidebar",
+        "CouncilMember",
+        "AgentDefinition",
+        "saveMemberProfile",
+        "setGuildMemberArchived",
+        "deleteGuildMember"
+      ],
+      "primary_files": [
+        "apps/desktop/src/CouncilSidebar.tsx",
+        "apps/desktop/src/CouncilMember.tsx",
+        "apps/desktop/src/App.tsx",
+        "apps/desktop/src/ConfirmationDialogs.tsx",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Persistence/GuildhallDbContext.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/CouncilSidebar.tsx::renderMember",
+        "apps/desktop/src/CouncilMember.tsx::CouncilMember",
+        "apps/desktop/src/App.tsx::saveMemberProfile",
+        "apps/desktop/src/ConfirmationDialogs.tsx::ConfirmationDialogs",
+        "services/agent-host/Api/ChatEndpoints.cs::ValidateProfile",
+        "services/agent-host/Api/ChatEndpoints.cs::GuildMemberLifecycleRequest",
+        "services/agent-host/Persistence/GuildhallDbContext.cs::AgentDefinition"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 0
+    },
+    "detached-background-host": {
+      "card": ".agents/index/workflows/detached-background-host.md",
+      "title": "Detached Background Host & Attach Handoff",
+      "area": "host-security-lifecycle",
+      "triggers": [
+        "Start-BackgroundHost.ps1",
+        "AttachBackground",
+        "background-host.json",
+        "GuildhallAgentHostBackground",
+        "RegisterLogonTask"
+      ],
+      "primary_files": [
+        "scripts/startup/Start-BackgroundHost.ps1",
+        "scripts/startup/Start-Dev.ps1",
+        "scripts/misc/Common.ps1",
+        "services/agent-host/Program.cs"
+      ],
+      "anchors": [
+        "scripts/startup/Start-BackgroundHost.ps1::Register-ScheduledTask",
+        "scripts/startup/Start-BackgroundHost.ps1::Protect-BgToken",
+        "scripts/startup/Start-BackgroundHost.ps1::Start-OwnedChild",
+        "scripts/startup/Start-BackgroundHost.ps1::$bgManifestPath",
+        "scripts/startup/Start-Dev.ps1::AttachBackground",
+        "services/agent-host/Program.cs::DurableTaskSchedulerService"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "dpapi-secrets-and-env-scrubbing": {
+      "card": ".agents/index/workflows/dpapi-secrets-and-env-scrubbing.md",
+      "title": "DPAPI Secrets Storage & Child Env Scrubbing",
+      "area": "host-security-lifecycle",
+      "triggers": [
+        "DpapiCredentialStore",
+        "EnvironmentScrubber.BuildScrubbedEnvironment",
+        "PUT /connections/{id}/api-key",
+        "DELETE /connections/{id}/api-key",
+        "POST /connections/{id}/sign-in"
+      ],
+      "primary_files": [
+        "services/agent-host/Api/ConnectionEndpoints.cs",
+        "services/agent-host/Configuration/DpapiCredentialStore.cs",
+        "services/agent-host/Configuration/ICredentialStore.cs",
+        "services/agent-host/Configuration/EnvironmentScrubber.cs",
+        "services/agent-host/Providers/ConnectionCatalogService.cs",
+        "services/agent-host/Providers/Cli/CliProcessRunner.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Api/ConnectionEndpoints.cs::ConnectionEndpoints.MapConnections",
+        "services/agent-host/Configuration/DpapiCredentialStore.cs::DpapiCredentialStore.SetApiKeyAsync",
+        "services/agent-host/Configuration/DpapiCredentialStore.cs::DpapiCredentialStore.CryptProtectData",
+        "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.ProbeCloudKeyAsync",
+        "services/agent-host/Api/ConnectionEndpoints.cs::ICliProcessRunner.LaunchInteractiveLogin",
+        "services/agent-host/Configuration/EnvironmentScrubber.cs::EnvironmentScrubber.BuildScrubbedEnvironment",
+        "services/agent-host/Providers/Cli/CliProcessRunner.cs::CliProcessRunner.CreateProcess"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "durable-scheduler-and-five-tier-health": {
+      "card": ".agents/index/workflows/durable-scheduler-and-five-tier-health.md",
+      "title": "Durable Cron Scheduler & Five-Tier Health Supervision",
+      "area": "infra-scheduling-health",
+      "triggers": [
+        "/schedules",
+        "/schedules/runs/{taskRunId}/stream",
+        "/health/tiers",
+        "/health/ui-heartbeat",
+        "DurableTaskSchedulerService",
+        "CronScheduleParser",
+        "FiveTierHealthSupervisor",
+        "ScheduledAutomation",
+        "DurableTaskRun"
+      ],
+      "primary_files": [
+        "apps/desktop/src/ScheduledTasksPanel.tsx",
+        "apps/desktop/src/HealthTiersBadge.tsx",
+        "services/agent-host/Api/ScheduleEndpoints.cs",
+        "services/agent-host/Api/HealthEndpoints.cs",
+        "services/agent-host/Scheduling/CronScheduleParser.cs",
+        "services/agent-host/Scheduling/DurableTaskSchedulerService.cs",
+        "services/agent-host/Health/FiveTierHealthSupervisor.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/ScheduledTasksPanel.tsx::ScheduledTasksPanel.handleCreate",
+        "services/agent-host/Api/ScheduleEndpoints.cs::ScheduleEndpoints.MapScheduleEndpoints",
+        "services/agent-host/Scheduling/CronScheduleParser.cs::CronScheduleParser.TryParse",
+        "services/agent-host/Scheduling/DurableTaskSchedulerService.cs::DurableTaskSchedulerService.ExecuteAsync",
+        "services/agent-host/Scheduling/DurableTaskSchedulerService.cs::DurableTaskSchedulerService.DispatchQueuedRunsAsync",
+        "apps/desktop/src/HealthTiersBadge.tsx::HealthTiersBadge",
+        "services/agent-host/Api/HealthEndpoints.cs::HealthEndpoints.MapHealthEndpoints",
+        "services/agent-host/Health/FiveTierHealthSupervisor.cs::FiveTierHealthSupervisor.ExecuteAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "ef-core-schema-and-lazy-loading": {
+      "card": ".agents/index/workflows/ef-core-schema-and-lazy-loading.md",
+      "title": "EF Core 10 Schema, Lazy Loading & Readiness",
+      "area": "sql-persistence-migrations",
+      "triggers": [
+        "GuildhallDbContext",
+        "IDbContextFactory",
+        "ILazyLoader",
+        "ChatAttachment",
+        "Revision",
+        "DatabaseReadiness",
+        "DesignTimeFactory",
+        "GET /ready",
+        "GET /attachments/{id}"
+      ],
+      "primary_files": [
+        "services/agent-host/Program.cs",
+        "services/agent-host/Persistence/GuildhallDbContext.cs",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Persistence/DatabaseReadiness.cs",
+        "services/agent-host/Persistence/DesignTimeFactory.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Program.cs::AddDbContextFactory",
+        "services/agent-host/Persistence/GuildhallDbContext.cs::GuildhallDbContext",
+        "services/agent-host/Persistence/GuildhallDbContext.cs::ILazyLoader",
+        "services/agent-host/Persistence/GuildhallDbContext.cs::IsConcurrencyToken",
+        "services/agent-host/Api/ChatEndpoints.cs::ChatAttachments",
+        "services/agent-host/Persistence/DatabaseReadiness.cs::DatabaseReadiness.CheckAsync",
+        "services/agent-host/Persistence/DesignTimeFactory.cs::DesignTimeFactory.CreateDbContext"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 0
+    },
+    "local-api-boundary-bootstrap": {
+      "card": ".agents/index/workflows/local-api-boundary-bootstrap.md",
+      "title": "Local API Boundary & Tauri Bootstrap",
+      "area": "host-security-lifecycle",
+      "triggers": [
+        "bootstrap",
+        "LocalApiBoundary.UseLocalBoundary",
+        "LocalConfiguration.LoopbackUri",
+        "GUILDHALL_SESSION_TOKEN",
+        "GUILDHALL_HOST_URL",
+        "request"
+      ],
+      "primary_files": [
+        "apps/desktop/src-tauri/tauri.conf.json",
+        "apps/desktop/src-tauri/capabilities/main.json",
+        "apps/desktop/src-tauri/permissions/bootstrap.toml",
+        "apps/desktop/src-tauri/src/main.rs",
+        "apps/desktop/src/api.ts",
+        "apps/desktop/src/App.tsx",
+        "services/agent-host/Configuration/LocalConfiguration.cs",
+        "services/agent-host/Program.cs",
+        "services/agent-host/Api/LocalApiBoundary.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src-tauri/tauri.conf.json::capabilities",
+        "apps/desktop/src-tauri/src/main.rs::main",
+        "apps/desktop/src-tauri/src/main.rs::bootstrap",
+        "apps/desktop/src/api.ts::request",
+        "services/agent-host/Configuration/LocalConfiguration.cs::LocalConfiguration.LoopbackUri",
+        "services/agent-host/Program.cs::UseLocalBoundary",
+        "services/agent-host/Api/LocalApiBoundary.cs::LocalApiBoundary.UseLocalBoundary"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "mcp-registry-health-and-jsonrpc": {
+      "card": ".agents/index/workflows/mcp-registry-health-and-jsonrpc.md",
+      "title": "MCP Registry, Tier-5 Health Circuit Breaker & JSON-RPC Transport",
+      "area": "mcp-tools-security-gate",
+      "triggers": [
+        "McpRegistry",
+        "McpHealthSupervisor",
+        "McpJsonRpcClient",
+        "GET /mcp/tools",
+        "POST /mcp/servers",
+        "POST /mcp/servers/{id}/probe",
+        "McpServerRegistrations"
+      ],
+      "primary_files": [
+        "services/agent-host/Api/McpEndpoints.cs",
+        "services/agent-host/Mcp/McpRegistry.cs",
+        "services/agent-host/Mcp/McpHealthSupervisor.cs",
+        "services/agent-host/Mcp/McpJsonRpcClient.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Api/McpEndpoints.cs::McpEndpoints.MapMcpEndpoints",
+        "services/agent-host/Api/McpEndpoints.cs::PrivateNetworkGuard.ValidateMcpEndpoint",
+        "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.GetEnabledToolsForMemberAsync",
+        "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.InvokeToolAsync",
+        "services/agent-host/Mcp/McpHealthSupervisor.cs::McpHealthSupervisor.RecordFailure",
+        "services/agent-host/Mcp/McpJsonRpcClient.cs::McpJsonRpcClient.SendHttpAsync",
+        "services/agent-host/Mcp/McpJsonRpcClient.cs::McpJsonRpcClient.SendStdioAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "multi-instance-dev-orchestration": {
+      "card": ".agents/index/workflows/multi-instance-dev-orchestration.md",
+      "title": "Multi-Instance Dev Session Orchestration",
+      "area": "host-security-lifecycle",
+      "triggers": [
+        "Start-Dev.ps1",
+        "Get-DevStatus.ps1",
+        "Stop-Dev.ps1",
+        "New-ChildEnvironment",
+        "Get-VerifiedGuildhallPortListeners",
+        "GUILDHALL_INSTANCE_TAG"
+      ],
+      "primary_files": [
+        "scripts/startup/Start-Dev.ps1",
+        "scripts/startup/Get-DevStatus.ps1",
+        "scripts/startup/Stop-Dev.ps1",
+        "scripts/misc/Common.ps1"
+      ],
+      "anchors": [
+        "scripts/startup/Start-Dev.ps1::Stop-RegisteredDevSession",
+        "scripts/misc/Common.ps1::Get-InstanceWindowMetadata",
+        "scripts/misc/Common.ps1::New-ChildEnvironment",
+        "scripts/startup/Start-Dev.ps1::$sharedManifestPath",
+        "scripts/startup/Get-DevStatus.ps1::Get-RegisteredDevSessions",
+        "scripts/startup/Stop-Dev.ps1::Stop-RegisteredDevSession",
+        "scripts/misc/Common.ps1::Get-VerifiedGuildhallPortListeners"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "preamble-cache-hot-reload": {
+      "card": ".agents/index/workflows/preamble-cache-hot-reload.md",
+      "title": "Preamble RAM Cache & FileSystemWatcher Hot-Reload",
+      "area": "council-memory-context",
+      "triggers": [
+        "/preambles",
+        "PreambleCacheService",
+        "PreambleCacheOptions",
+        "global-guidelines.md",
+        "FileSystemWatcher",
+        "GetGlobalGuidelines",
+        "GetMemberPreamble"
+      ],
+      "primary_files": [
+        "services/agent-host/Program.cs",
+        "services/agent-host/Chat/PreambleCacheService.cs",
+        "services/agent-host/Preambles/global-guidelines.md",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Chat/ChatRunner.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Program.cs::PreambleCacheService",
+        "services/agent-host/Chat/PreambleCacheService.cs::PreambleCacheService",
+        "services/agent-host/Preambles/global-guidelines.md::Guildhall Global Guidelines",
+        "services/agent-host/Chat/PreambleCacheService.cs::TryLoadFileWithRetry",
+        "services/agent-host/Chat/PreambleCacheService.cs::EvictToFit",
+        "services/agent-host/Api/ChatEndpoints.cs::PreambleCacheSnapshotResponse",
+        "services/agent-host/Chat/ChatRunner.cs::SettingsSnapshotJson"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 0
+    },
+    "private-networking-and-remote-mcp": {
+      "card": ".agents/index/workflows/private-networking-and-remote-mcp.md",
+      "title": "Private Networking & Remote Streamable HTTP MCP",
+      "area": "infra-scheduling-health",
+      "triggers": [
+        "/infrastructure/network-status",
+        "/mcp/servers",
+        "PrivateNetworkGuard",
+        "PrivateNetworkProbeService",
+        "PrivateInfrastructurePanel",
+        "McpServerRegistration",
+        "streamable_http"
+      ],
+      "primary_files": [
+        "apps/desktop/src/PrivateInfrastructurePanel.tsx",
+        "services/agent-host/Api/McpEndpoints.cs",
+        "services/agent-host/Mcp/PrivateNetworkProbeService.cs",
+        "services/agent-host/Mcp/McpRegistry.cs",
+        "services/agent-host/Mcp/McpJsonRpcClient.cs",
+        "services/agent-host/Security/PrivateNetworkGuard.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/PrivateInfrastructurePanel.tsx::PrivateInfrastructurePanel.refreshAll",
+        "services/agent-host/Api/McpEndpoints.cs::McpEndpoints.MapMcpEndpoints",
+        "services/agent-host/Mcp/PrivateNetworkProbeService.cs::PrivateNetworkProbeService.Inspect",
+        "services/agent-host/Security/PrivateNetworkGuard.cs::PrivateNetworkGuard.ValidateMcpEndpoint",
+        "apps/desktop/src/PrivateInfrastructurePanel.tsx::PrivateInfrastructurePanel.handleCreateRemoteMcp",
+        "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.ProbeServerAsync",
+        "services/agent-host/Mcp/McpJsonRpcClient.cs::McpJsonRpcClient.SendHttpAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "project-registration-and-worktree-isolation": {
+      "card": ".agents/index/workflows/project-registration-and-worktree-isolation.md",
+      "title": "Project Registration & Isolated Git Worktree Lifecycle",
+      "area": "projects-worktrees-rollback",
+      "triggers": [
+        "ProjectWorkspaceBar",
+        "pick_workspace_folder",
+        "POST /projects",
+        "POST /conversations/{conversationId}/worktree",
+        "GET /conversations/{conversationId}/worktree/diff",
+        "POST /conversations/{conversationId}/worktree/merge",
+        "POST /conversations/{conversationId}/worktree/discard",
+        "ProjectWorkspaceService",
+        "WorktreeDiffDrawer"
+      ],
+      "primary_files": [
+        "apps/desktop/src/ProjectWorkspaceBar.tsx",
+        "apps/desktop/src-tauri/src/main.rs",
+        "services/agent-host/Api/ProjectEndpoints.cs",
+        "services/agent-host/Workspaces/ProjectWorkspaceService.cs",
+        "apps/desktop/src/WorktreeDiffDrawer.tsx",
+        "apps/desktop/src/SessionToolsPane.tsx",
+        "services/agent-host/Persistence/GuildhallDbContext.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/ProjectWorkspaceBar.tsx::ProjectWorkspaceBar",
+        "apps/desktop/src-tauri/src/main.rs::pick_workspace_folder",
+        "services/agent-host/Api/ProjectEndpoints.cs::ProjectEndpoints.MapProjectEndpoints",
+        "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.RegisterProjectAsync",
+        "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.CreateOrGetWorktreeAsync",
+        "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.MergeWorktreeAsync",
+        "apps/desktop/src/WorktreeDiffDrawer.tsx::WorktreeDiffDrawer"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "readonly-sql-mcp-and-gateway": {
+      "card": ".agents/index/workflows/readonly-sql-mcp-and-gateway.md",
+      "title": "Read-Only SQL Server MCP & Gateway",
+      "area": "infra-scheduling-health",
+      "triggers": [
+        "/mcp/sql/profiles",
+        "POST /mcp/gateway",
+        "sql-server-mcp",
+        "sql_query",
+        "SqlReadOnlyGuard",
+        "SqlServerMcpProvider",
+        "SqlMcpProfile"
+      ],
+      "primary_files": [
+        "services/agent-host/Api/SqlMcpEndpoints.cs",
+        "services/agent-host/Api/McpGatewayEndpoints.cs",
+        "services/agent-host/Mcp/McpRegistry.cs",
+        "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs",
+        "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs"
+      ],
+      "anchors": [
+        "services/agent-host/Api/SqlMcpEndpoints.cs::SqlMcpEndpoints.MapSqlMcpEndpoints",
+        "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs::SqlReadOnlyGuard.ValidateDatabaseTarget",
+        "services/agent-host/Api/McpGatewayEndpoints.cs::McpGatewayEndpoints.MapMcpGatewayEndpoints",
+        "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.InvokeToolAsync",
+        "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.InvokeAsync",
+        "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs::SqlReadOnlyGuard.ValidateQuery",
+        "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.ExecuteQueryAsync",
+        "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.BuildConnectionStringAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "sql-backup-restore-verification": {
+      "card": ".agents/index/workflows/sql-backup-restore-verification.md",
+      "title": "SQL COPY_ONLY Backup & Isolated Restore Verification",
+      "area": "sql-persistence-migrations",
+      "triggers": [
+        "Verify-SqlBackupRestore.ps1",
+        "SqlBackupRestoreTests",
+        "GuildhallRestoreVerify_",
+        "COPY_ONLY",
+        "RESTORE VERIFYONLY"
+      ],
+      "primary_files": [
+        "scripts/database/Verify-SqlBackupRestore.ps1",
+        "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs"
+      ],
+      "anchors": [
+        "scripts/database/Verify-SqlBackupRestore.ps1::Get-LocalSqlConnection",
+        "scripts/database/Verify-SqlBackupRestore.ps1::COPY_ONLY",
+        "scripts/database/Verify-SqlBackupRestore.ps1::RESTORE FILELISTONLY",
+        "scripts/database/Verify-SqlBackupRestore.ps1::INFORMATION_SCHEMA.TABLES",
+        "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs::SqlBackupRestoreTests.IsolatedCopyOnlyBackupAndRestorePreservesMigrationsAndRows",
+        "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs::GetPendingMigrationsAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "sql-provisioning-and-migrations": {
+      "card": ".agents/index/workflows/sql-provisioning-and-migrations.md",
+      "title": "SQL Provisioning, DPAPI Runtime Identity & Migrations",
+      "area": "sql-persistence-migrations",
+      "triggers": [
+        "Provision-Database.ps1",
+        "Migrate-Database.ps1",
+        "Invoke-AutoDatabaseMigration",
+        "Get-LocalSqlConnection",
+        "ApproveMigrations",
+        "guildhall_runtime",
+        "LocalConfiguration.RuntimeConnection"
+      ],
+      "primary_files": [
+        "scripts/database/Provision-Database.ps1",
+        "scripts/startup/Start-Dev.ps1",
+        "scripts/misc/Common.ps1",
+        "scripts/database/Migrate-Database.ps1",
+        "services/agent-host/Persistence/DesignTimeFactory.cs",
+        "services/agent-host/Configuration/LocalConfiguration.cs"
+      ],
+      "anchors": [
+        "scripts/database/Provision-Database.ps1::guildhall_runtime",
+        "scripts/startup/Start-Dev.ps1::Invoke-AutoDatabaseMigration",
+        "scripts/misc/Common.ps1::Get-LocalSqlConnection",
+        "scripts/misc/Common.ps1::Invoke-AutoDatabaseMigration",
+        "scripts/database/Migrate-Database.ps1::ConnectionStrings__GuildhallMigrations",
+        "services/agent-host/Persistence/DesignTimeFactory.cs::DesignTimeFactory",
+        "services/agent-host/Configuration/LocalConfiguration.cs::LocalConfiguration.RuntimeConnection"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    },
+    "three-scope-memory-and-context-budget": {
+      "card": ".agents/index/workflows/three-scope-memory-and-context-budget.md",
+      "title": "Three-Scope Memory Notes, Context Budget & Live VRAM",
+      "area": "council-memory-context",
+      "triggers": [
+        "/memory-notes",
+        "/guildhall-behavior",
+        "/conversations/{id}/context",
+        "/vram",
+        "ContextBuilder",
+        "CrossTurnBudgetOptions",
+        "MemoryNotesPanel",
+        "ContextInspector",
+        "WorkspaceSettingsPanel"
+      ],
+      "primary_files": [
+        "apps/desktop/src/WorkspaceSettingsPanel.tsx",
+        "apps/desktop/src/GuildhallBehaviorSettings.tsx",
+        "apps/desktop/src/MemoryNotesPanel.tsx",
+        "apps/desktop/src/ContextInspector.tsx",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Chat/ContextBuilder.cs",
+        "services/agent-host/Providers/Ollama/OllamaDiscovery.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/WorkspaceSettingsPanel.tsx::MemoryNotesPanel",
+        "apps/desktop/src/MemoryNotesPanel.tsx::MemoryNotesPanel",
+        "apps/desktop/src/ContextInspector.tsx::ContextInspector",
+        "services/agent-host/Api/ChatEndpoints.cs::MemoryNoteResponse",
+        "services/agent-host/Api/ChatEndpoints.cs::ContextInspectorResponse",
+        "services/agent-host/Chat/ContextBuilder.cs::ContextBuilder",
+        "services/agent-host/Providers/Ollama/OllamaDiscovery.cs::GetRunningModelsAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 2
+    },
+    "tool-loop-approval-and-exfiltration-gate": {
+      "card": ".agents/index/workflows/tool-loop-approval-and-exfiltration-gate.md",
+      "title": "Tool Loop, HITL Approval Gate & Exfiltration Redaction",
+      "area": "mcp-tools-security-gate",
+      "triggers": [
+        "MaxToolRounds",
+        "pendingApprovals",
+        "ToolPermissionGate.Evaluate",
+        "ExfiltrationGuard",
+        "POST /runs/{runId}/events/{eventId}/decision",
+        "RunTraceList"
+      ],
+      "primary_files": [
+        "services/agent-host/Chat/ChatRunner.cs",
+        "services/agent-host/Security/ToolPermissionGate.cs",
+        "services/agent-host/Security/ExfiltrationGuard.cs",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "apps/desktop/src/RunTraceList.tsx"
+      ],
+      "anchors": [
+        "services/agent-host/Chat/ChatRunner.cs::PermissionPolicies.ResolveEffective",
+        "services/agent-host/Chat/ChatRunner.cs::MaxToolRounds",
+        "services/agent-host/Security/ToolPermissionGate.cs::ToolPermissionGate.Evaluate",
+        "services/agent-host/Security/ExfiltrationGuard.cs::ExfiltrationGuard.ContainsSensitiveSecret",
+        "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ExecuteToolCallWithGateAsync",
+        "apps/desktop/src/RunTraceList.tsx::RunTraceList.onResolveDecision",
+        "services/agent-host/Api/ChatEndpoints.cs::ChatRunner.ResolveEventDecisionAsync",
+        "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ResolveEventDecisionAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 0
+    },
+    "tool-rollback-and-workspace-policies": {
+      "card": ".agents/index/workflows/tool-rollback-and-workspace-policies.md",
+      "title": "Tier 2 Tool Rollbacks & Workspace Access/Worktree Policies",
+      "area": "projects-worktrees-rollback",
+      "triggers": [
+        "ToolRollbackService",
+        "CapturePreStateAsync",
+        "RollbackEventAsync",
+        "POST /runs/{runId}/events/{eventId}/rollback",
+        "GET/PUT /settings/access-policy",
+        "GET/PUT /settings/worktree-root",
+        "RunTraceList",
+        "WorkspaceSettingsPanel"
+      ],
+      "primary_files": [
+        "apps/desktop/src/RunTraceList.tsx",
+        "apps/desktop/src/WorkspaceSettingsPanel.tsx",
+        "services/agent-host/Api/ProjectEndpoints.cs",
+        "services/agent-host/Chat/ChatRunner.cs",
+        "services/agent-host/Security/ToolPermissionGate.cs",
+        "services/agent-host/Workspaces/ToolRollbackService.cs",
+        "apps/desktop/src/App.tsx",
+        "services/agent-host/Api/ChatEndpoints.cs",
+        "services/agent-host/Security/WorkspacePathGuard.cs",
+        "services/agent-host/Persistence/GuildhallDbContext.cs"
+      ],
+      "anchors": [
+        "apps/desktop/src/RunTraceList.tsx::RunTraceList",
+        "apps/desktop/src/WorkspaceSettingsPanel.tsx::WorkspaceSettingsPanel",
+        "services/agent-host/Api/ProjectEndpoints.cs::ProjectEndpoints.MapProjectEndpoints",
+        "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ExecuteToolCallWithGateAsync",
+        "services/agent-host/Security/ToolPermissionGate.cs::ToolPermissionGate.Evaluate",
+        "services/agent-host/Workspaces/ToolRollbackService.cs::ToolRollbackService.CapturePreStateAsync",
+        "services/agent-host/Workspaces/ToolRollbackService.cs::ToolRollbackService.RollbackEventAsync"
+      ],
+      "verified_commit": "51bca7eb5076022dcd1ff89d460d683c1e1e3848",
+      "uncertainties_count": 1
+    }
+  },
+  "file_to_workflows": {
+    "apps/desktop/src-tauri/capabilities/main.json": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src-tauri/permissions/bootstrap.toml": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src-tauri/src/main.rs": [
+      "local-api-boundary-bootstrap",
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src-tauri/tauri.conf.json": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src/App.tsx": [
+      "chat-queue-send-now-and-recovery",
+      "connections-catalog-and-discovery",
+      "council-member-lifecycle",
+      "local-api-boundary-bootstrap",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "apps/desktop/src/ChatComposer.tsx": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/ChatTranscript.tsx": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/ConfirmationDialogs.tsx": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/ConnectionsCatalog.tsx": [
+      "connections-catalog-and-discovery"
+    ],
+    "apps/desktop/src/ContextInspector.tsx": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/CouncilMember.tsx": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/CouncilSidebar.tsx": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/GuildhallBehaviorSettings.tsx": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/HealthTiersBadge.tsx": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "apps/desktop/src/MemoryNotesPanel.tsx": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/PrivateInfrastructurePanel.tsx": [
+      "private-networking-and-remote-mcp"
+    ],
+    "apps/desktop/src/ProjectWorkspaceBar.tsx": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src/RunTraceList.tsx": [
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "apps/desktop/src/ScheduledTasksPanel.tsx": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "apps/desktop/src/SessionToolsPane.tsx": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src/WorkspaceSettingsPanel.tsx": [
+      "three-scope-memory-and-context-budget",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "apps/desktop/src/WorktreeDiffDrawer.tsx": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src/api.ts": [
+      "local-api-boundary-bootstrap"
+    ],
+    "scripts/database/Migrate-Database.ps1": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/database/Provision-Database.ps1": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/database/Verify-SqlBackupRestore.ps1": [
+      "sql-backup-restore-verification"
+    ],
+    "scripts/misc/Common.ps1": [
+      "detached-background-host",
+      "multi-instance-dev-orchestration",
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/startup/Get-DevStatus.ps1": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/startup/Start-BackgroundHost.ps1": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-Dev.ps1": [
+      "detached-background-host",
+      "multi-instance-dev-orchestration",
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/startup/Stop-Dev.ps1": [
+      "multi-instance-dev-orchestration"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs": [
+      "chat-queue-send-now-and-recovery",
+      "council-member-lifecycle",
+      "ef-core-schema-and-lazy-loading",
+      "preamble-cache-hot-reload",
+      "three-scope-memory-and-context-budget",
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Api/ConnectionEndpoints.cs": [
+      "connections-catalog-and-discovery",
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Api/HealthEndpoints.cs": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Api/LocalApiBoundary.cs": [
+      "local-api-boundary-bootstrap"
+    ],
+    "services/agent-host/Api/McpEndpoints.cs": [
+      "mcp-registry-health-and-jsonrpc",
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Api/McpGatewayEndpoints.cs": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Api/ProjectEndpoints.cs": [
+      "project-registration-and-worktree-isolation",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Api/ScheduleEndpoints.cs": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Api/SqlMcpEndpoints.cs": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Chat/ChatRecovery.cs": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs": [
+      "chat-queue-send-now-and-recovery",
+      "preamble-cache-hot-reload",
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Chat/ContextBuilder.cs": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Chat/PreambleCacheService.cs": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Configuration/DpapiCredentialStore.cs": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/EnvironmentScrubber.cs": [
+      "backing-engine-streaming-adapters",
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/ICredentialStore.cs": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/LocalConfiguration.cs": [
+      "local-api-boundary-bootstrap",
+      "sql-provisioning-and-migrations"
+    ],
+    "services/agent-host/Health/FiveTierHealthSupervisor.cs": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Mcp/McpHealthSupervisor.cs": [
+      "mcp-registry-health-and-jsonrpc"
+    ],
+    "services/agent-host/Mcp/McpJsonRpcClient.cs": [
+      "mcp-registry-health-and-jsonrpc",
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Mcp/McpRegistry.cs": [
+      "mcp-registry-health-and-jsonrpc",
+      "private-networking-and-remote-mcp",
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/PrivateNetworkProbeService.cs": [
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GitHubMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GmailMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GoogleDriveMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalCommandMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalFilesystemMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalGitMcpProvider.cs": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Persistence/DatabaseReadiness.cs": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Persistence/DesignTimeFactory.cs": [
+      "ef-core-schema-and-lazy-loading",
+      "sql-provisioning-and-migrations"
+    ],
+    "services/agent-host/Persistence/GuildhallDbContext.cs": [
+      "council-member-lifecycle",
+      "ef-core-schema-and-lazy-loading",
+      "project-registration-and-worktree-isolation",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Preambles/global-guidelines.md": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Program.cs": [
+      "detached-background-host",
+      "ef-core-schema-and-lazy-loading",
+      "local-api-boundary-bootstrap",
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Providers/BackingEngineRegistry.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliHarnessAdapters.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliHarnessDescriptors.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliHarnessEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliProcessRunner.cs": [
+      "backing-engine-streaming-adapters",
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Providers/Cloud/AnthropicCloudEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/GeminiCloudEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/OpenAiCloudEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/SseStreamReader.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/ConnectionCatalogService.cs": [
+      "connections-catalog-and-discovery",
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Providers/IBackingEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Ollama/OllamaBackingEngine.cs": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Ollama/OllamaDiscovery.cs": [
+      "connections-catalog-and-discovery",
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Scheduling/CronScheduleParser.cs": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Scheduling/DurableTaskSchedulerService.cs": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Security/ExfiltrationGuard.cs": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Security/PrivateNetworkGuard.cs": [
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Security/ToolPermissionGate.cs": [
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Security/WorkspacePathGuard.cs": [
+      "builtin-workspace-and-external-mcp",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Workspaces/ProjectWorkspaceService.cs": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "services/agent-host/Workspaces/ToolRollbackService.cs": [
+      "tool-rollback-and-workspace-policies"
+    ],
+    "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs": [
+      "sql-backup-restore-verification"
+    ]
+  },
+  "symbol_to_workflows": {
+    "apps/desktop/src-tauri/src/main.rs::bootstrap": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src-tauri/src/main.rs::main": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src-tauri/src/main.rs::pick_workspace_folder": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src-tauri/tauri.conf.json::capabilities": [
+      "local-api-boundary-bootstrap"
+    ],
+    "apps/desktop/src/App.tsx::probeAllConnections": [
+      "connections-catalog-and-discovery"
+    ],
+    "apps/desktop/src/App.tsx::promoteQueuedMessage": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/App.tsx::saveMemberProfile": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/App.tsx::sendMessage": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/ChatComposer.tsx::ChatComposer.addAttachments": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/ChatTranscript.tsx::ChatTranscript": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "apps/desktop/src/ConfirmationDialogs.tsx::ConfirmationDialogs": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/ConnectionsCatalog.tsx::ConnectionsCatalog": [
+      "connections-catalog-and-discovery"
+    ],
+    "apps/desktop/src/ContextInspector.tsx::ContextInspector": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/CouncilMember.tsx::CouncilMember": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/CouncilSidebar.tsx::renderMember": [
+      "council-member-lifecycle"
+    ],
+    "apps/desktop/src/HealthTiersBadge.tsx::HealthTiersBadge": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "apps/desktop/src/MemoryNotesPanel.tsx::MemoryNotesPanel": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/PrivateInfrastructurePanel.tsx::PrivateInfrastructurePanel.handleCreateRemoteMcp": [
+      "private-networking-and-remote-mcp"
+    ],
+    "apps/desktop/src/PrivateInfrastructurePanel.tsx::PrivateInfrastructurePanel.refreshAll": [
+      "private-networking-and-remote-mcp"
+    ],
+    "apps/desktop/src/ProjectWorkspaceBar.tsx::ProjectWorkspaceBar": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src/RunTraceList.tsx::RunTraceList": [
+      "tool-rollback-and-workspace-policies"
+    ],
+    "apps/desktop/src/RunTraceList.tsx::RunTraceList.onResolveDecision": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "apps/desktop/src/ScheduledTasksPanel.tsx::ScheduledTasksPanel.handleCreate": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "apps/desktop/src/WorkspaceSettingsPanel.tsx::MemoryNotesPanel": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "apps/desktop/src/WorkspaceSettingsPanel.tsx::WorkspaceSettingsPanel": [
+      "tool-rollback-and-workspace-policies"
+    ],
+    "apps/desktop/src/WorktreeDiffDrawer.tsx::WorktreeDiffDrawer": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "apps/desktop/src/api.ts::request": [
+      "local-api-boundary-bootstrap"
+    ],
+    "scripts/database/Migrate-Database.ps1::ConnectionStrings__GuildhallMigrations": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/database/Provision-Database.ps1::guildhall_runtime": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/database/Verify-SqlBackupRestore.ps1::COPY_ONLY": [
+      "sql-backup-restore-verification"
+    ],
+    "scripts/database/Verify-SqlBackupRestore.ps1::Get-LocalSqlConnection": [
+      "sql-backup-restore-verification"
+    ],
+    "scripts/database/Verify-SqlBackupRestore.ps1::INFORMATION_SCHEMA.TABLES": [
+      "sql-backup-restore-verification"
+    ],
+    "scripts/database/Verify-SqlBackupRestore.ps1::RESTORE FILELISTONLY": [
+      "sql-backup-restore-verification"
+    ],
+    "scripts/misc/Common.ps1::Get-InstanceWindowMetadata": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/misc/Common.ps1::Get-LocalSqlConnection": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/misc/Common.ps1::Get-VerifiedGuildhallPortListeners": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/misc/Common.ps1::Invoke-AutoDatabaseMigration": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/misc/Common.ps1::New-ChildEnvironment": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/startup/Get-DevStatus.ps1::Get-RegisteredDevSessions": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/startup/Start-BackgroundHost.ps1::$bgManifestPath": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-BackgroundHost.ps1::Protect-BgToken": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-BackgroundHost.ps1::Register-ScheduledTask": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-BackgroundHost.ps1::Start-OwnedChild": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-Dev.ps1::$sharedManifestPath": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/startup/Start-Dev.ps1::AttachBackground": [
+      "detached-background-host"
+    ],
+    "scripts/startup/Start-Dev.ps1::Invoke-AutoDatabaseMigration": [
+      "sql-provisioning-and-migrations"
+    ],
+    "scripts/startup/Start-Dev.ps1::Stop-RegisteredDevSession": [
+      "multi-instance-dev-orchestration"
+    ],
+    "scripts/startup/Stop-Dev.ps1::Stop-RegisteredDevSession": [
+      "multi-instance-dev-orchestration"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::ChatAttachments": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::ChatEndpoints.RequestFingerprint": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::ChatRunner.ResolveEventDecisionAsync": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::ContextInspectorResponse": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::GuildMemberLifecycleRequest": [
+      "council-member-lifecycle"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::MemoryNoteResponse": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::PreambleCacheSnapshotResponse": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Api/ChatEndpoints.cs::ValidateProfile": [
+      "council-member-lifecycle"
+    ],
+    "services/agent-host/Api/ConnectionEndpoints.cs::ConnectionEndpoints.MapConnections": [
+      "connections-catalog-and-discovery",
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Api/ConnectionEndpoints.cs::ICliProcessRunner.LaunchInteractiveLogin": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Api/HealthEndpoints.cs::HealthEndpoints.MapHealthEndpoints": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Api/LocalApiBoundary.cs::LocalApiBoundary.UseLocalBoundary": [
+      "local-api-boundary-bootstrap"
+    ],
+    "services/agent-host/Api/McpEndpoints.cs::McpEndpoints.MapMcpEndpoints": [
+      "mcp-registry-health-and-jsonrpc",
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Api/McpEndpoints.cs::PrivateNetworkGuard.ValidateMcpEndpoint": [
+      "mcp-registry-health-and-jsonrpc"
+    ],
+    "services/agent-host/Api/McpGatewayEndpoints.cs::McpGatewayEndpoints.MapMcpGatewayEndpoints": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Api/ProjectEndpoints.cs::ProjectEndpoints.MapProjectEndpoints": [
+      "project-registration-and-worktree-isolation",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Api/ScheduleEndpoints.cs::ScheduleEndpoints.MapScheduleEndpoints": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Api/SqlMcpEndpoints.cs::SqlMcpEndpoints.MapSqlMcpEndpoints": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Chat/ChatRecovery.cs::ChatRecoveryService.ReconcileAsync": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ExecuteAsync": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ExecuteToolCallWithGateAsync": [
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::ChatRunner.ResolveEventDecisionAsync": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::ChatRunner.SaveCheckpointAsync": [
+      "chat-queue-send-now-and-recovery"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::MaxToolRounds": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::PermissionPolicies.ResolveEffective": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Chat/ChatRunner.cs::SettingsSnapshotJson": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Chat/ContextBuilder.cs::ContextBuilder": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Chat/PreambleCacheService.cs::EvictToFit": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Chat/PreambleCacheService.cs::PreambleCacheService": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Chat/PreambleCacheService.cs::TryLoadFileWithRetry": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Configuration/DpapiCredentialStore.cs::DpapiCredentialStore.CryptProtectData": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/DpapiCredentialStore.cs::DpapiCredentialStore.SetApiKeyAsync": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/EnvironmentScrubber.cs::EnvironmentScrubber.BuildScrubbedEnvironment": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Configuration/LocalConfiguration.cs::LocalConfiguration.LoopbackUri": [
+      "local-api-boundary-bootstrap"
+    ],
+    "services/agent-host/Configuration/LocalConfiguration.cs::LocalConfiguration.RuntimeConnection": [
+      "sql-provisioning-and-migrations"
+    ],
+    "services/agent-host/Health/FiveTierHealthSupervisor.cs::FiveTierHealthSupervisor.ExecuteAsync": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Mcp/McpHealthSupervisor.cs::McpHealthSupervisor.RecordFailure": [
+      "mcp-registry-health-and-jsonrpc"
+    ],
+    "services/agent-host/Mcp/McpJsonRpcClient.cs::McpJsonRpcClient.SendHttpAsync": [
+      "mcp-registry-health-and-jsonrpc",
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Mcp/McpJsonRpcClient.cs::McpJsonRpcClient.SendStdioAsync": [
+      "mcp-registry-health-and-jsonrpc"
+    ],
+    "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.GetEnabledToolsForMemberAsync": [
+      "mcp-registry-health-and-jsonrpc"
+    ],
+    "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.InvokeToolAsync": [
+      "mcp-registry-health-and-jsonrpc",
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/McpRegistry.cs::McpRegistry.ProbeServerAsync": [
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Mcp/PrivateNetworkProbeService.cs::PrivateNetworkProbeService.Inspect": [
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GitHubMcpProvider.cs::GitHubMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GmailMcpProvider.cs::GmailMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/GoogleDriveMcpProvider.cs::GoogleDriveMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalCommandMcpProvider.cs::LocalCommandMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalFilesystemMcpProvider.cs::LocalFilesystemMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/LocalGitMcpProvider.cs::LocalGitMcpProvider.InvokeAsync": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs::SqlReadOnlyGuard.ValidateDatabaseTarget": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/Providers/SqlReadOnlyGuard.cs::SqlReadOnlyGuard.ValidateQuery": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.BuildConnectionStringAsync": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.ExecuteQueryAsync": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Mcp/Providers/SqlServerMcpProvider.cs::SqlServerMcpProvider.InvokeAsync": [
+      "readonly-sql-mcp-and-gateway"
+    ],
+    "services/agent-host/Persistence/DatabaseReadiness.cs::DatabaseReadiness.CheckAsync": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Persistence/DesignTimeFactory.cs::DesignTimeFactory": [
+      "sql-provisioning-and-migrations"
+    ],
+    "services/agent-host/Persistence/DesignTimeFactory.cs::DesignTimeFactory.CreateDbContext": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Persistence/GuildhallDbContext.cs::AgentDefinition": [
+      "council-member-lifecycle"
+    ],
+    "services/agent-host/Persistence/GuildhallDbContext.cs::GuildhallDbContext": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Persistence/GuildhallDbContext.cs::ILazyLoader": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Persistence/GuildhallDbContext.cs::IsConcurrencyToken": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Preambles/global-guidelines.md::Guildhall Global Guidelines": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Program.cs::AddDbContextFactory": [
+      "ef-core-schema-and-lazy-loading"
+    ],
+    "services/agent-host/Program.cs::DurableTaskSchedulerService": [
+      "detached-background-host"
+    ],
+    "services/agent-host/Program.cs::PreambleCacheService": [
+      "preamble-cache-hot-reload"
+    ],
+    "services/agent-host/Program.cs::UseLocalBoundary": [
+      "local-api-boundary-bootstrap"
+    ],
+    "services/agent-host/Providers/BackingEngineRegistry.cs::BackingEngineRegistry.Resolve": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliHarnessEngine.cs::CliHarnessEngineBase.StreamTurnAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cli/CliProcessRunner.cs::CliProcessRunner.CreateProcess": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Providers/Cloud/AnthropicCloudEngine.cs::AnthropicCloudEngine.StreamTurnAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/GeminiCloudEngine.cs::GeminiCloudEngine.StreamTurnAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/OpenAiCloudEngine.cs::OpenAiCloudEngine.StreamTurnAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Cloud/SseStreamReader.cs::SseStreamReader.ReadDataEventsAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.BuildCliEntryAsync": [
+      "connections-catalog-and-discovery"
+    ],
+    "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.BuildCloudEntryAsync": [
+      "connections-catalog-and-discovery"
+    ],
+    "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.GetCatalogAsync": [
+      "connections-catalog-and-discovery"
+    ],
+    "services/agent-host/Providers/ConnectionCatalogService.cs::ConnectionCatalogService.ProbeCloudKeyAsync": [
+      "dpapi-secrets-and-env-scrubbing"
+    ],
+    "services/agent-host/Providers/IBackingEngine.cs::IBackingEngine": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Ollama/OllamaBackingEngine.cs::OllamaBackingEngine.StreamTurnAsync": [
+      "backing-engine-streaming-adapters"
+    ],
+    "services/agent-host/Providers/Ollama/OllamaDiscovery.cs::GetRunningModelsAsync": [
+      "three-scope-memory-and-context-budget"
+    ],
+    "services/agent-host/Providers/Ollama/OllamaDiscovery.cs::OllamaDiscovery.DiscoverAsync": [
+      "connections-catalog-and-discovery"
+    ],
+    "services/agent-host/Scheduling/CronScheduleParser.cs::CronScheduleParser.TryParse": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Scheduling/DurableTaskSchedulerService.cs::DurableTaskSchedulerService.DispatchQueuedRunsAsync": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Scheduling/DurableTaskSchedulerService.cs::DurableTaskSchedulerService.ExecuteAsync": [
+      "durable-scheduler-and-five-tier-health"
+    ],
+    "services/agent-host/Security/ExfiltrationGuard.cs::ExfiltrationGuard.ContainsSensitiveSecret": [
+      "tool-loop-approval-and-exfiltration-gate"
+    ],
+    "services/agent-host/Security/PrivateNetworkGuard.cs::PrivateNetworkGuard.ValidateMcpEndpoint": [
+      "private-networking-and-remote-mcp"
+    ],
+    "services/agent-host/Security/ToolPermissionGate.cs::ToolPermissionGate.Evaluate": [
+      "tool-loop-approval-and-exfiltration-gate",
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Security/WorkspacePathGuard.cs::WorkspacePathGuard.ValidateWritePath": [
+      "builtin-workspace-and-external-mcp"
+    ],
+    "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.CreateOrGetWorktreeAsync": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.MergeWorktreeAsync": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "services/agent-host/Workspaces/ProjectWorkspaceService.cs::ProjectWorkspaceService.RegisterProjectAsync": [
+      "project-registration-and-worktree-isolation"
+    ],
+    "services/agent-host/Workspaces/ToolRollbackService.cs::ToolRollbackService.CapturePreStateAsync": [
+      "tool-rollback-and-workspace-policies"
+    ],
+    "services/agent-host/Workspaces/ToolRollbackService.cs::ToolRollbackService.RollbackEventAsync": [
+      "tool-rollback-and-workspace-policies"
+    ],
+    "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs::GetPendingMigrationsAsync": [
+      "sql-backup-restore-verification"
+    ],
+    "tests/Guildhall.AgentHost.Tests/SqlBackupRestoreTests.cs::SqlBackupRestoreTests.IsolatedCopyOnlyBackupAndRestorePreservesMigrationsAndRows": [
+      "sql-backup-restore-verification"
+    ]
+  }
+}
