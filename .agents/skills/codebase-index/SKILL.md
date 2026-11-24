@@ -36,7 +36,7 @@ Pure Python 3 stdlib (`<0.5s`, zero external packages):
 
 ## 3. Model Routing & Multi-Agent Pipeline
 
-Canonical role specifications live in [`.agents/agents/`](../../agents) and complement Guildhall's 5-role engineering roster in [`.agents/roster.md`](../../roster.md):
+Canonical role specifications live in [`.agents/agents/`](../../agents) and extend Guildhall's 6-role engineering & index pipeline roster in [`.agents/roster.md`](../../roster.md):
 
 | Role | Agent Spec | Recommended Model Tier | Concurrency | Purpose |
 | :--- | :--- | :--- | :--- | :--- |

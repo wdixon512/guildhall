@@ -3,22 +3,24 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - '!.agents/index/**'
-      - '.cursor/**'
-      - '.editorconfig'
-      - 'scripts/sql/**'
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - '.agents/index/**'
+      - '!.cursor/**'
+      - '!.editorconfig'
+      - '!scripts/sql/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - '!.agents/index/**'
-      - '.cursor/**'
-      - '.editorconfig'
-      - 'scripts/sql/**'
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
+      - '.agents/index/**'
+      - '!.cursor/**'
+      - '!.editorconfig'
+      - '!scripts/sql/**'
   workflow_dispatch:
     inputs:
       run_rust_tests:

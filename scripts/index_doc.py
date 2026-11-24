@@ -32,7 +32,7 @@ ROUTER_MARKER_RE = re.compile(
     r"<!-- index-router-start -->\n(.*?)<!-- index-router-end -->",
     re.DOTALL,
 )
-FENCED_BLOCK_RE = re.compile(r"```.*?```|````.*?````", re.DOTALL)
+FENCED_BLOCK_RE = re.compile(r"````.*?````|```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((<[^>\n]+>|[^)\s]+)(?:\s+\"[^\"]*\")?\)")
 TODO_TBD_RE = re.compile(r"\b(?:TODO|TBD)\b")
@@ -433,8 +433,9 @@ def _parse_execution_spine(body: str, label: str) -> list[Hop]:
         file_rel = _strip_code_ticks(file_raw)
         symbol = _strip_code_ticks(sym_raw)
         line_hint = _strip_code_ticks(hint_raw)
-        if not file_rel or "\\" in file_rel or file_rel.startswith(("./", "/")):
+        if not file_rel:
             raise ValueError(f"{label}: hop {expected_hop} invalid repo-relative file {file_rel!r}")
+        _validate_repo_rel_path(file_rel, f"hop {expected_hop}", label)
         if not symbol:
             raise ValueError(f"{label}: hop {expected_hop} empty Symbol / Anchor")
         m_hint = LINE_HINT_RE.match(line_hint)
@@ -475,7 +476,13 @@ def _validate_str_list(val: Any, key: str, label: str, *, allow_empty: bool) -> 
 
 
 def _validate_repo_rel_path(rel: str, key: str, label: str) -> None:
-    if "\\" in rel or rel.startswith(("./", "/")) or ".." in rel.split("/"):
+    if (
+        "\\" in rel
+        or rel.startswith(("./", "/"))
+        or ".." in rel.split("/")
+        or Path(rel).is_absolute()
+        or re.match(r"^[A-Za-z]:", rel)
+    ):
         raise ValueError(f"{label}: {key} entry {rel!r} must be a clean forward-slash repo-relative path")
 
 
@@ -741,12 +748,15 @@ def _check_markdown_links(md_path: Path, root: Path) -> list[str]:
     stripped = INLINE_CODE_RE.sub("code", stripped)
     for match in MD_LINK_RE.finditer(stripped):
         href = match.group(2).strip()
-        if not href or href.startswith(("#", "http://", "https://", "mailto:", "conversation://")):
-            continue
         if href.startswith("<") and href.endswith(">"):
             href = href[1:-1].strip()
+        if not href or href.startswith(("#", "http://", "https://", "mailto:", "conversation://")):
+            continue
         target_part = unquote(href.split("#", 1)[0])
         if not target_part:
+            continue
+        if "\\" in target_part:
+            errors.append(f"{label}: relative link {href!r} must use forward slashes")
             continue
         resolved = (md_path.parent / target_part).resolve()
         try:
@@ -997,9 +1007,10 @@ def find_dirty_workflows(root: Path) -> tuple[list[str], list[str]]:
                 dirty.add(wf.id)
             continue
         all_files = sorted({f for wf in group for f in wf.primary_files})
-        # Diff against the working tree so both committed and pre-commit edits mark cards dirty.
+        # Diff against the working tree (NUL-delimited, unquoted) plus untracked primary_files
+        # so committed, staged, unstaged, and brand-new untracked edits all mark cards dirty.
         diff = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", commit_sha, "--", *all_files],
+            ["git", "-C", str(root), "-c", "core.quotepath=false", "diff", "-z", "--name-only", commit_sha, "--", *all_files],
             capture_output=True,
             text=True,
             check=False,
@@ -1007,7 +1018,15 @@ def find_dirty_workflows(root: Path) -> tuple[list[str], list[str]]:
         if diff.returncode != 0:
             errors.append(f"git diff failed for {commit_sha}: {diff.stderr.strip()}")
             continue
-        changed = {line.strip().replace("\\", "/") for line in diff.stdout.splitlines() if line.strip()}
+        changed = {entry.replace("\\", "/") for entry in diff.stdout.split("\0") if entry}
+        untracked = subprocess.run(
+            ["git", "-C", str(root), "-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "-z", "--", *all_files],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if untracked.returncode == 0:
+            changed.update(entry.replace("\\", "/") for entry in untracked.stdout.split("\0") if entry)
         for wf in group:
             if changed.intersection(wf.primary_files):
                 dirty.add(wf.id)
@@ -1037,7 +1056,8 @@ def run_self_check() -> int:
         write_rel("docs/masterplan/phase 1/sample.md", "# phase 1 sample\n")
         src_lines = [f"// header line {i}" for i in range(1, 30)]
         src_lines.append("public sealed class SampleHostService")
-        src_lines.extend([f"    // body {i}" for i in range(31, 45)])
+        src_lines.append("    public void ExecuteAsync() {}")
+        src_lines.extend([f"    // body {i}" for i in range(32, 45)])
         write_rel("services/agent-host/SampleHostService.cs", "\n".join(src_lines) + "\n")
 
         write_rel(".agents/index/SCHEMA.md", "# Schema\n")
@@ -1087,7 +1107,13 @@ def run_self_check() -> int:
             "## Contracts & References\n\n"
             "- [codebase-index](../../skills/codebase-index/SKILL.md)\n"
             "- [coding-standards](../../../docs/coding-standards.md)\n"
-            "- [phase-1](<../../../docs/masterplan/phase 1/sample.md>)\n",
+            "- [phase-1](<../../../docs/masterplan/phase 1/sample.md>)\n"
+            "- [external](<https://example.com>)\n\n"
+            "````markdown\n"
+            "```text\n"
+            "TODO inside 4-backtick fence [fake](missing.md)\n"
+            "```\n"
+            "````\n",
         )
         card_template = (
             "---\n"
@@ -1111,7 +1137,7 @@ def run_self_check() -> int:
             "## Execution Spine\n\n"
             "| Hop | Layer | File | Symbol / Anchor | Line Hint | State / Wire | Invariant / Trap |\n"
             "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n"
-            "| 1 | Agent Host | `services/agent-host/SampleHostService.cs` | `SampleHostService` | `{line_hint}` | `DI` | Use `IDbContextFactory` |\n\n"
+            "| 1 | Agent Host | `services/agent-host/SampleHostService.cs` | `SampleHostService.ExecuteAsync` | `{line_hint}` | `DI` | Use `IDbContextFactory` |\n\n"
             "## Contracts & Guardrails\n"
             "- See [codebase-index](../../skills/codebase-index/SKILL.md).\n\n"
             "## Targeted Verification\n"
@@ -1128,18 +1154,20 @@ def run_self_check() -> int:
         manifest = json.loads((root / ".agents/index/manifest.json").read_text(encoding="utf-8"))
         assert manifest["file_to_workflows"] == {"services/agent-host/SampleHostService.cs": ["sample-host-flow"]}
         assert manifest["symbol_to_workflows"] == {
-            "services/agent-host/SampleHostService.cs::SampleHostService": ["sample-host-flow"]
+            "services/agent-host/SampleHostService.cs::SampleHostService.ExecuteAsync": ["sample-host-flow"]
         }
 
-        # 3. Drift >25 lines + broken backtick-labeled link + malformed uncertainty path -> FAIL
+        # 3. Drift >25 lines + broken backtick-labeled link + backslash link + malformed uncertainty path -> FAIL
         write_rel(
             ".agents/index/workflows/sample-host-flow.md",
             card_template.format(uncertainties_block="uncertainties: []\n", line_hint="~L1-L3")
-            + "\n- Broken backtick link: [`missing-wf`](missing-wf.md)\n",
+            + "\n- Broken backtick link: [`missing-wf`](missing-wf.md)\n"
+            + "- Backslash link: [bad](..\\..\\skills\\codebase-index\\SKILL.md)\n",
         )
         errs = validate_index(root, check_generated=False)
         assert any("outside ~L1-L3" in e for e in errs), f"expected >25L drift error, got {errs}"
         assert any("missing-wf.md" in e for e in errs), f"expected backtick-link error, got {errs}"
+        assert any("forward slashes" in e for e in errs), f"expected backslash-link error, got {errs}"
 
         bad_unc = (
             "uncertainties:\n"
@@ -1167,15 +1195,18 @@ def run_self_check() -> int:
             card_template.format(uncertainties_block=static_unc, line_hint="~L28-L35") + "\nTODO fix\n",
         )
         write_rel(".agents/index/.crawl/S1.json", "{}\n")
+        subprocess.run(["git", "-C", str(root), "add", ".agents/index/.crawl/S1.json"], check=True)
         write_index(root)
         rr_errs = validate_index(root, release_ready=True)
-        assert any(".crawl/" in e for e in rr_errs), rr_errs
+        assert any(".crawl/ exists" in e for e in rr_errs), rr_errs
+        assert any("tracked/staged" in e for e in rr_errs), rr_errs
         assert any("static_or_runtime='static'" in e for e in rr_errs), rr_errs
         assert any("TODO" in e for e in rr_errs), rr_errs
 
         # Clean up and test --dirty (both uncommitted and committed)
-        (root / ".agents/index/.crawl/S1.json").unlink()
-        (root / ".agents/index/.crawl").rmdir()
+        subprocess.run(["git", "-C", str(root), "rm", "-q", "-f", ".agents/index/.crawl/S1.json"], check=True)
+        if (root / ".agents/index/.crawl").exists():
+            (root / ".agents/index/.crawl").rmdir()
         write_rel(
             ".agents/index/workflows/sample-host-flow.md",
             card_template.format(uncertainties_block="uncertainties: []\n", line_hint="~L28-L35"),

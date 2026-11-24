@@ -39,7 +39,7 @@ Full schema rules live in [`.agents/index/SCHEMA.md`](../../.agents/index/SCHEMA
 
 - Canonical index roles live in `.agents/agents/{index-crawler,index-builder,index-auditor,index-registrar,github-manager}.md` and are coordinated by `.agents/skills/codebase-index/SKILL.md` and `.agents/skills/work-work/SKILL.md`.
 - Static source-code ambiguities must be resolved by `index-crawler` before card synthesis; `uncertainties` is reserved strictly for genuine runtime/external boundaries (such as `%LOCALAPPDATA%\Guildhall\` DPAPI files or local SQL Server / Ollama runtime configuration).
-- `.github/workflows/ci.yml` runs `python3 scripts/index_doc.py --self-check` and `python3 scripts/index_doc.py --release-ready` (`<1s`) and un-ignores `.agents/index/**` so index-only PRs remain validated without breaking `docs/**` cost savings.
+- `.github/workflows/ci.yml` runs `python3 scripts/index_doc.py --self-check` and `python3 scripts/index_doc.py --release-ready` (`<1s`) and explicitly includes `.agents/index/**` under `paths:` (after `!**/*.md`) so index-only PRs remain validated without breaking `docs/**` cost savings.
 
 ## Consequences
 

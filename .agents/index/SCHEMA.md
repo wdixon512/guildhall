@@ -110,6 +110,7 @@ One-sentence summary of workflow purpose, entrypoint, and output.
     - boundary: "Local DPAPI credential store"
       location: "services/agent-host/Configuration/DpapiCredentialStore.cs::DpapiCredentialStore"
       note: "Encrypted *.dpapi files live under %LOCALAPPDATA%\\Guildhall\\credentials outside git"
+      static_or_runtime: "runtime"
   ```
 - `python scripts/index_doc.py --release-ready` fails if `.agents/index/.crawl/` exists, if any card carries `"static"` uncertainties, or if any card contains `TODO` / `TBD` placeholders.
 
