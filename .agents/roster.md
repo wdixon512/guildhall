@@ -24,6 +24,7 @@ This repository manages two distinct layers of agents:
 | **3. Frontend & Tauri Specialist** | Owns `apps/desktop/` and `scripts/startup/`. Implements React 19 + strict TypeScript UI, `React.lazy` code-splitting, CSS layout, Vitest unit tests, and bounded Tauri 2 Rust commands (`src-tauri/`). | **Fast / Medium** (e.g., GPT-6 Luna, Gemini Flash/Medium) |
 | **4. Security & Guardrail Reviewer** | Read-only audit of hardcoded ASP.NET Core backend guardrails, loopback/token auth, Tauri CSP/capabilities, subprocess environment scrubbing, anti-exfiltration filters, and least-privilege `guildhall_runtime` SQL grants. | **High** (Read-only subagent or review pass) |
 | **5. UI & Interaction Reviewer** | Defined in [`.cursor/agents/guildhall-ui-reviewer.md`](../.cursor/agents/guildhall-ui-reviewer.md). Mandatory read-only visual hierarchy, keyboard/focus, responsive, and placeholder honesty check before presenting any UI change. | **Inherited / Medium** (Read-only subagent) |
+| **6. Index & GitHub Pipeline Agents** | Canonical specs in [`.agents/agents/`](agents/): `index-crawler` (`flash`), `index-builder` (`flash`), `index-registrar` (`flash_lite`), `index-auditor` (`pro`/`inherit`), and `github-manager` (`flash`). Maintain `.agents/index/` via `scripts/index_doc.py` and run `/work-work` GitHub/PR gates. | **Tiered** (`flash_lite` / `flash` / `pro` per role spec) |
 
 ---
 
@@ -32,8 +33,9 @@ This repository manages two distinct layers of agents:
 To keep token spend low and prevent context pollution, every coding agent must follow this strict loading order:
 
 1. **Step 1 — Root Router (`AGENTS.md`):** Read [AGENTS.md](../AGENTS.md) (and [docs/coding-standards.md](../docs/coding-standards.md) when writing C#, EF Core, TypeScript, or Tauri code).
-2. **Step 2 — Scoped Master Plan & Active Phase Folder:** Read only the relevant section of [personal_ai_ecosystem_master_plan.md](../docs/masterplan/personal_ai_ecosystem_master_plan.md) and the specific document in `docs/masterplan/phase N/` for the current task (e.g., `docs/masterplan/phase 6/phase-6.md`).
-3. **Step 3 — Task Declaration Before Editing:** State the allowed files, acceptance criteria, and verification commands before modifying source files. Use broad codebase search only when targeted documentation does not answer the question.
+2. **Step 2 — Codebase Workflow Index (`.agents/index/`):** Read [`.agents/index/INDEX.md`](index/INDEX.md) (<=120 lines) or inspect `file_to_workflows` / `symbol_to_workflows` in [`.agents/index/manifest.json`](index/manifest.json) to jump directly to the relevant Area Map (`areas/*.md`), Workflow Card (`workflows/*.md`), and bounded `read_file` hop ranges (`<2,000` tokens) before running broad codebase greps.
+3. **Step 3 — Scoped Master Plan & Active Phase Folder:** Read only the relevant section of [personal_ai_ecosystem_master_plan.md](../docs/masterplan/personal_ai_ecosystem_master_plan.md) and the specific document in `docs/masterplan/phase N/` for the current task (e.g., `docs/masterplan/phase 6/phase-6.md`).
+4. **Step 4 — Task Declaration & Index Sync:** State the allowed files, acceptance criteria, and verification commands before modifying source files (or run [`.agents/skills/work-work/SKILL.md`](skills/work-work/SKILL.md)), and run `python scripts/index_doc.py --dirty` / `--write` / `--release-ready` whenever indexed symbols or workflows change.
 
 ---
 

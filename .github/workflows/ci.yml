@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      - '!.agents/index/**'
       - '.cursor/**'
       - '.editorconfig'
       - 'scripts/sql/**'
@@ -14,6 +15,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      - '!.agents/index/**'
       - '.cursor/**'
       - '.editorconfig'
       - 'scripts/sql/**'
@@ -64,6 +66,11 @@ jobs:
           node-version: '24.13.0'
           cache: 'npm'
           cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Validate codebase workflow index
+        run: |
+          python3 scripts/index_doc.py --self-check
+          python3 scripts/index_doc.py --release-ready
 
       - name: Validate PowerShell 7 script syntax
         shell: pwsh
